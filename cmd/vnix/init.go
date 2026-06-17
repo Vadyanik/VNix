@@ -9,9 +9,21 @@ import (
 
 func InitCommand() {
 	fmt.Println("Initializing VNIX...")
-	os.MkdirAll(".vnix", os.ModePerm)
 
-	_, err := os.Stat(".vnix/config.json")
+	info, err := os.Stat(".vnix")
+	if err == nil && !info.IsDir() {
+		fmt.Println("Error: '.vnix' exists but is not a directory. Please remove or rename it and try again.")
+		return
+	}
+	if os.IsNotExist(err) {
+		if err := os.MkdirAll(".vnix", 0o755); err != nil {
+			panic(err)
+		}
+	} else if err != nil {
+		panic(err)
+	}
+
+	_, err = os.Stat(".vnix/config.json")
 	if os.IsNotExist(err) {
 		CreateConfig()
 	} else {
@@ -23,6 +35,19 @@ func InitCommand() {
 		CreateStats()
 	} else {
 		fmt.Println("stats.json already exists, skipping...")
+	}
+
+	info, err = os.Stat("modules")
+	if err == nil && !info.IsDir() {
+		fmt.Println("Error: 'modules' exists but is not a directory. Please remove or rename it and try again.")
+		return
+	}
+	if os.IsNotExist(err) {
+		if err := os.MkdirAll("modules", 0o755); err != nil {
+			panic(err)
+		}
+	} else if err != nil {
+		panic(err)
 	}
 
 	_, err = os.Stat("modules/vnix_packages.nix")
@@ -106,7 +131,7 @@ func CreateVNIXPackageFile() {
 }
 
 func InstructUser() {
-fmt.Println(`modules/vnix_packages.nix installed successfully. For it to work you need to add: 
+	fmt.Println(`modules/vnix_packages.nix installed successfully. For it to work you need to add: 
 
 imports = [
 

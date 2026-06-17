@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt";
+	"fmt"
 	"os"
 )
 
@@ -11,7 +11,7 @@ func main() {
 		fmt.Println("Usage: vnix <command>")
 		return
 	}
-	
+
 	switch os.Args[1] {
 	case "init":
 		InitCommand()
