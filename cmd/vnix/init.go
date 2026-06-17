@@ -7,20 +7,19 @@ import (
 	"strings"
 )
 
-func InitCommand() {
+func InitCommand() error {
 	fmt.Println("Initializing VNIX...")
 
 	info, err := os.Stat(".vnix")
 	if err == nil && !info.IsDir() {
-		fmt.Println("Error: '.vnix' exists but is not a directory. Please remove or rename it and try again.")
-		return
+		return fmt.Errorf("'.vnix' exists but is not a directory")
 	}
 	if os.IsNotExist(err) {
 		if err := os.MkdirAll(".vnix", 0o755); err != nil {
-			panic(err)
+			return err
 		}
 	} else if err != nil {
-		panic(err)
+		return err
 	}
 
 	_, err = os.Stat(".vnix/config.json")
@@ -39,24 +38,25 @@ func InitCommand() {
 
 	info, err = os.Stat("modules")
 	if err == nil && !info.IsDir() {
-		fmt.Println("Error: 'modules' exists but is not a directory. Please remove or rename it and try again.")
-		return
+		return fmt.Errorf("'modules' exists but is not a directory")
 	}
 	if os.IsNotExist(err) {
 		if err := os.MkdirAll("modules", 0o755); err != nil {
-			panic(err)
+			return err
 		}
 	} else if err != nil {
-		panic(err)
+		return err
 	}
 
 	_, err = os.Stat("modules/vnix_packages.nix")
 	if os.IsNotExist(err) {
-		CreateVNIXPackageFile()
+		if err := CreateVNIXPackageFile(); err != nil {
+			return err
+		}
 	} else {
 		data, err := os.ReadFile("modules/vnix_packages.nix")
 		if err != nil {
-			panic(err)
+			return err
 		}
 		if strings.Contains(string(data), "# vnix:start") && strings.Contains(string(data), "# vnix:end") {
 			fmt.Println("vnix_packages.nix already exists and contains the required markers, skipping...")
@@ -66,9 +66,11 @@ func InitCommand() {
 			fmt.Println("# vnix:end")
 		}
 	}
+
+	return nil
 }
 
-func CreateConfig() {
+func CreateConfig() error {
 	fmt.Println("Creating config.json...")
 	config := map[string]any{
 		"managed_packages_file": "modules/vnix_packages.nix",
@@ -77,16 +79,18 @@ func CreateConfig() {
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	err = os.WriteFile(".vnix/config.json", data, 0644)
 	if err != nil {
-		panic(err)
+		return err
 	}
+
+	return nil
 }
 
-func CreateStats() {
+func CreateStats() error {
 	fmt.Println("Creating stats.json...")
 	config := map[string]any{
 		"total_rebuilds":      0,
@@ -97,20 +101,22 @@ func CreateStats() {
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	err = os.WriteFile(".vnix/stats.json", data, 0644)
 	if err != nil {
-		panic(err)
+		return err
 	}
+
+	return nil
 }
 
-func CreateVNIXPackageFile() {
+func CreateVNIXPackageFile() error {
 	fmt.Println("Creating vnix_packages.nix...")
 	err := os.MkdirAll("modules", os.ModePerm)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	content := `{ pkgs, ... }:
@@ -125,9 +131,11 @@ func CreateVNIXPackageFile() {
 
 	err = os.WriteFile("modules/vnix_packages.nix", []byte(content), 0644)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	InstructUser()
+
+	return nil
 }
 
 func InstructUser() {

@@ -14,7 +14,10 @@ func main() {
 
 	switch os.Args[1] {
 	case "init":
-		InitCommand()
+		if err := InitCommand(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	case "search":
 		SearchCommand()
 	case "stats":
