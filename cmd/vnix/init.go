@@ -9,17 +9,17 @@ func InitCommand() {
 	_, err := os.Stat(".vnix/config.json")
 	if os.IsNotExist(err) {
 		CreateConfig()
-	}
+	} else { fmt.Println("config.json already exists, skipping...") }
 
 	_, err = os.Stat(".vnix/stats.json")
 	if os.IsNotExist(err) {
 		CreateStats()
-	}
+	} else { fmt.Println("stats.json already exists, skipping...") }
 
 	_, err = os.Stat("modules/vnix_packages.nix")
 	if os.IsNotExist(err) {
 		CreateVNIXPackageFile()
-	}
+	} else { fmt.Println("vnix_packages.nix already exists, skipping...") }
 }
 
 func CreateConfig() {
