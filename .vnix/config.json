@@ -1,4 +1,0 @@
-{
-  "managed_packages_file": "modules/vnix_packages.nix",
-  "rebuild_command": "sudo nixos-rebuild switch --flake ."
-}
