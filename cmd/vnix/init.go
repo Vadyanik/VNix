@@ -1,6 +1,11 @@
 package main
 
-import("fmt"; "encoding/json"; "os")
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+)
 
 func InitCommand() {
 	fmt.Println("Initializing VNIX...")
@@ -9,53 +14,79 @@ func InitCommand() {
 	_, err := os.Stat(".vnix/config.json")
 	if os.IsNotExist(err) {
 		CreateConfig()
-	} else { fmt.Println("config.json already exists, skipping...") }
+	} else {
+		fmt.Println("config.json already exists, skipping...")
+	}
 
 	_, err = os.Stat(".vnix/stats.json")
 	if os.IsNotExist(err) {
 		CreateStats()
-	} else { fmt.Println("stats.json already exists, skipping...") }
+	} else {
+		fmt.Println("stats.json already exists, skipping...")
+	}
 
 	_, err = os.Stat("modules/vnix_packages.nix")
 	if os.IsNotExist(err) {
 		CreateVNIXPackageFile()
-	} else { fmt.Println("vnix_packages.nix already exists, skipping...") }
+	} else {
+		data, err := os.ReadFile("modules/vnix_packages.nix")
+		if err != nil {
+			panic(err)
+		}
+		if strings.Contains(string(data), "# vnix:start") && strings.Contains(string(data), "# vnix:end") {
+			fmt.Println("vnix_packages.nix already exists and contains the required markers, skipping...")
+		} else {
+			fmt.Println("vnix_packages.nix already exists but does not contain the required markers. Please ensure that the file contains the following lines:")
+			fmt.Println("# vnix:start")
+			fmt.Println("# vnix:end")
+		}
+	}
 }
 
 func CreateConfig() {
 	fmt.Println("Creating config.json...")
 	config := map[string]any{
 		"managed_packages_file": "modules/vnix_packages.nix",
-		"rebuild_command": "sudo nixos-rebuild switch --flake .",
+		"rebuild_command":       "sudo nixos-rebuild switch --flake .",
 	}
 
 	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {	panic(err)}
+	if err != nil {
+		panic(err)
+	}
 
 	err = os.WriteFile(".vnix/config.json", data, 0644)
-	if err != nil {	panic(err)}
+	if err != nil {
+		panic(err)
+	}
 }
 
 func CreateStats() {
 	fmt.Println("Creating stats.json...")
 	config := map[string]any{
-		"total_rebuilds": 0,
+		"total_rebuilds":      0,
 		"successful_rebuilds": 0,
-		"failed_rebuilds": 0,
-		"first_rebuild_time": "",
+		"failed_rebuilds":     0,
+		"first_rebuild_time":  "",
 	}
 
 	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {	panic(err)}
+	if err != nil {
+		panic(err)
+	}
 
 	err = os.WriteFile(".vnix/stats.json", data, 0644)
-	if err != nil {	panic(err)}
+	if err != nil {
+		panic(err)
+	}
 }
 
 func CreateVNIXPackageFile() {
 	fmt.Println("Creating vnix_packages.nix...")
 	err := os.MkdirAll("modules", os.ModePerm)
-	if err != nil {	panic(err)}
+	if err != nil {
+		panic(err)
+	}
 
 	content := `{ pkgs, ... }:
 
@@ -68,8 +99,14 @@ func CreateVNIXPackageFile() {
 `
 
 	err = os.WriteFile("modules/vnix_packages.nix", []byte(content), 0644)
-	if err != nil {	panic(err)}
-	message := `modules/vnix_packages.nix installed successfully. For it to work you need to add: 
+	if err != nil {
+		panic(err)
+	}
+	InstructUser()
+}
+
+func InstructUser() {
+fmt.Println(`modules/vnix_packages.nix installed successfully. For it to work you need to add: 
 
 imports = [
 
@@ -77,6 +114,5 @@ imports = [
 
 ];
 
-to your nixos config.`
-	fmt.Println(message)
+to your nixos config.`)
 }
