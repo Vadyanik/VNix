@@ -93,10 +93,24 @@ func CreateConfig() error {
 func CreateStats() error {
 	fmt.Println("Creating stats.json...")
 	config := map[string]any{
-		"total_rebuilds":      0,
-		"successful_rebuilds": 0,
-		"failed_rebuilds":     0,
-		"first_rebuild_time":  "",
+		"total_rebuilds":              0,
+		"successful_rebuilds":         0,
+		"failed_rebuilds":             0,
+		"consecutive_successes":       0,
+		"consecutive_failures":        0,
+		"first_rebuild_time":          "",
+		"last_rebuild_time":           "",
+		"last_success_time":           "",
+		"last_failure_time":           "",
+		"last_rebuild_duration_ms":    0,
+		"best_rebuild_duration_ms":    0,
+		"worst_rebuild_duration_ms":   0,
+		"average_rebuild_duration_ms": 0,
+		"last_status":                 "",
+		"last_command":                "",
+		"last_error":                  "",
+		"history_limit":               0,
+		"rebuild_history":             []RebuildEntry{},
 	}
 
 	data, err := json.MarshalIndent(config, "", "  ")

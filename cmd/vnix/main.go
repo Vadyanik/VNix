@@ -30,7 +30,7 @@ func main() {
 	case "search":
 		SearchCommand()
 	case "stats":
-		fmt.Println("Displaying system stats...")
+		_ = StatsCommand()
 	case "rebuild":
 		if err := RebuildCommand(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
