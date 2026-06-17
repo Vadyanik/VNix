@@ -32,6 +32,9 @@ func main() {
 	case "stats":
 		fmt.Println("Displaying system stats...")
 	case "rebuild":
-		fmt.Println("Rebuilding system configuration...")
+		if err := RebuildCommand(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 }
