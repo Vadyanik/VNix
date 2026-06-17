@@ -25,7 +25,7 @@ func main() {
 				os.Exit(1)
 			}
 		} else {
-			fmt.Println("Please provide a package name to install.")
+			fmt.Println("Usage: vnix install <package> [package...]")
 		}
 	case "search":
 		SearchCommand()

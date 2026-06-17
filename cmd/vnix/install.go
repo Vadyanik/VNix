@@ -3,12 +3,30 @@ package main
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 )
+
+var packageNamePattern = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
 
 func InstallCommand(packageNames ...string) error {
 	if len(packageNames) == 0 {
 		return fmt.Errorf("please provide at least one package name to install")
+	}
+
+	seen := make(map[string]struct{}, len(packageNames))
+	for _, packageName := range packageNames {
+		packageName = strings.TrimSpace(packageName)
+		if packageName == "" {
+			return fmt.Errorf("Валідація назви пакета: package name cannot be empty")
+		}
+		if !packageNamePattern.MatchString(packageName) {
+			return fmt.Errorf("Валідація назви пакета: invalid package name %q", packageName)
+		}
+		if _, ok := seen[packageName]; ok {
+			return fmt.Errorf("Валідація назви пакета: duplicate package name %q in one command", packageName)
+		}
+		seen[packageName] = struct{}{}
 	}
 
 	_, err := os.Stat("modules/vnix_packages.nix")
@@ -34,9 +52,6 @@ func InstallCommand(packageNames ...string) error {
 	installBlock := content[startMarker+len("# vnix:start") : endMarker]
 	added := 0
 	for _, packageName := range packageNames {
-		if strings.TrimSpace(packageName) == "" {
-			continue
-		}
 		if blockContainsPackage(installBlock, packageName) {
 			fmt.Printf("Package '%s' is already installed in modules/vnix_packages.nix\n", packageName)
 			continue
