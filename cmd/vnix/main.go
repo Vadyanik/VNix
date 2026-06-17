@@ -18,6 +18,15 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+	case "install":
+		if len(os.Args) >= 3 {
+			if err := InstallCommand(os.Args[2:]...); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Println("Please provide a package name to install.")
+		}
 	case "search":
 		SearchCommand()
 	case "stats":
