@@ -69,4 +69,14 @@ func CreateVNIXPackageFile() {
 
 	err = os.WriteFile("modules/vnix_packages.nix", []byte(content), 0644)
 	if err != nil {	panic(err)}
+	message := `modules/vnix_packages.nix installed successfully. For it to work you need to add: 
+
+imports = [
+
+  ./modules/vnix_packages.nix
+
+];
+
+to your nixos config.`
+	fmt.Println(message)
 }
