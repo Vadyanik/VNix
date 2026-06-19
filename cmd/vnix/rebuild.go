@@ -14,28 +14,6 @@ type Config struct {
 	RebuildCommand string `json:"rebuild_command"`
 }
 
-type Stats struct {
-	TotalRebuilds            int            `json:"total_rebuilds"`
-	SuccessfulRebuilds       int            `json:"successful_rebuilds"`
-	FailedRebuilds           int            `json:"failed_rebuilds"`
-	ConsecutiveSuccesses     int            `json:"consecutive_successes"`
-	ConsecutiveFailures      int            `json:"consecutive_failures"`
-	FirstRebuildTime         string         `json:"first_rebuild_time"`
-	LastRebuildTime          string         `json:"last_rebuild_time"`
-	LastSuccessTime          string         `json:"last_success_time"`
-	LastFailureTime          string         `json:"last_failure_time"`
-	LastRebuildDurationMs    int64          `json:"last_rebuild_duration_ms"`
-	BestRebuildDurationMs    int64          `json:"best_rebuild_duration_ms"`
-	WorstRebuildDurationMs   int64          `json:"worst_rebuild_duration_ms"`
-	AverageRebuildDurationMs int64          `json:"average_rebuild_duration_ms"`
-	LastExitCode             *int           `json:"last_exit_code,omitempty"`
-	LastStatus               string         `json:"last_status"`
-	LastCommand              string         `json:"last_command"`
-	LastError                string         `json:"last_error"`
-	RebuildHistory           []RebuildEntry `json:"rebuild_history"`
-	HistoryLimit             int            `json:"history_limit"`
-}
-
 type RebuildEntry struct {
 	StartedAt        string `json:"started_at"`
 	FinishedAt       string `json:"finished_at"`
@@ -113,62 +91,11 @@ func runRebuildCommand(command string) error {
 }
 
 func updateStats(entry RebuildEntry) error {
-	data, err := os.ReadFile(".vnix/stats.json")
-	if err != nil {
-		return err
-	}
-
-	var stats Stats
-	if err := json.Unmarshal(data, &stats); err != nil {
-		return err
-	}
-
-	if stats.HistoryLimit < 0 {
-		stats.HistoryLimit = 0
-	}
-	if stats.TotalRebuilds == 0 || stats.BestRebuildDurationMs == 0 || entry.DurationMs < stats.BestRebuildDurationMs {
-		stats.BestRebuildDurationMs = entry.DurationMs
-	}
-	if entry.DurationMs > stats.WorstRebuildDurationMs {
-		stats.WorstRebuildDurationMs = entry.DurationMs
-	}
-	stats.TotalRebuilds++
-	stats.LastRebuildTime = entry.FinishedAt
-	stats.LastRebuildDurationMs = entry.DurationMs
-	stats.LastCommand = entry.Command
-	stats.LastStatus = statusFor(entry.Success)
-	stats.LastError = entry.ErrorMessage
-	stats.LastExitCode = entry.ExitCode
-	if stats.FirstRebuildTime == "" {
-		stats.FirstRebuildTime = entry.StartedAt
-	}
-	if entry.Success {
-		stats.SuccessfulRebuilds++
-		stats.ConsecutiveSuccesses++
-		stats.ConsecutiveFailures = 0
-		stats.LastSuccessTime = entry.FinishedAt
-	} else {
-		stats.FailedRebuilds++
-		stats.ConsecutiveFailures++
-		stats.ConsecutiveSuccesses = 0
-		stats.LastFailureTime = entry.FinishedAt
-	}
-	if stats.TotalRebuilds == 1 {
-		stats.AverageRebuildDurationMs = entry.DurationMs
-	} else {
-		stats.AverageRebuildDurationMs = ((stats.AverageRebuildDurationMs * int64(stats.TotalRebuilds-1)) + entry.DurationMs) / int64(stats.TotalRebuilds)
-	}
-	stats.RebuildHistory = append([]RebuildEntry{entry}, stats.RebuildHistory...)
-	if stats.HistoryLimit > 0 && len(stats.RebuildHistory) > stats.HistoryLimit {
-		stats.RebuildHistory = stats.RebuildHistory[:stats.HistoryLimit]
-	}
-
-	updated, err := json.MarshalIndent(stats, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(".vnix/stats.json", updated, 0o644)
+	sql := buildInsertSQL(entry)
+	cmd := exec.Command("sqlite3", ".vnix/stats.db", sql)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func statusFor(success bool) string {
@@ -243,4 +170,37 @@ func diffLineSum(stats map[string][2]int, index int) int {
 		total += value[index]
 	}
 	return total
+}
+
+func buildInsertSQL(entry RebuildEntry) string {
+	exitCode := "NULL"
+	if entry.ExitCode != nil {
+		exitCode = strconv.Itoa(*entry.ExitCode)
+	}
+	errorMessage := sqlString(entry.ErrorMessage)
+	return fmt.Sprintf(
+		"INSERT INTO rebuilds (started_at, finished_at, duration_ms, success, exit_code, command, error_message, diff_files_changed, diff_added_lines, diff_deleted_lines, diff_total_lines) VALUES (%s, %s, %d, %d, %s, %s, %s, %d, %d, %d, %d);",
+		sqlString(entry.StartedAt),
+		sqlString(entry.FinishedAt),
+		entry.DurationMs,
+		boolToInt(entry.Success),
+		exitCode,
+		sqlString(entry.Command),
+		errorMessage,
+		entry.DiffFilesChanged,
+		entry.DiffAddedLines,
+		entry.DiffDeletedLines,
+		entry.DiffTotalLines,
+	)
+}
+
+func sqlString(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }

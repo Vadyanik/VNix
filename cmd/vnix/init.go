@@ -1,9 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -29,11 +29,13 @@ func InitCommand() error {
 		fmt.Println("config.json already exists, skipping...")
 	}
 
-	_, err = os.Stat(".vnix/stats.json")
+	_, err = os.Stat(".vnix/stats.db")
 	if os.IsNotExist(err) {
-		CreateStats()
+		if err := CreateStatsDB(); err != nil {
+			return err
+		}
 	} else {
-		fmt.Println("stats.json already exists, skipping...")
+		fmt.Println("stats.db already exists, skipping...")
 	}
 
 	info, err = os.Stat("modules")
@@ -72,58 +74,39 @@ func InitCommand() error {
 
 func CreateConfig() error {
 	fmt.Println("Creating config.json...")
-	config := map[string]any{
-		"managed_packages_file": "modules/vnix_packages.nix",
-		"rebuild_command":       "sudo nixos-rebuild switch --flake .",
-	}
-
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	err = os.WriteFile(".vnix/config.json", data, 0644)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	content := `{
+  "managed_packages_file": "modules/vnix_packages.nix",
+  "rebuild_command": "sudo nixos-rebuild switch --flake ."
+}`
+	return os.WriteFile(".vnix/config.json", []byte(content), 0644)
 }
 
-func CreateStats() error {
-	fmt.Println("Creating stats.json...")
-	config := map[string]any{
-		"total_rebuilds":              0,
-		"successful_rebuilds":         0,
-		"failed_rebuilds":             0,
-		"consecutive_successes":       0,
-		"consecutive_failures":        0,
-		"first_rebuild_time":          "",
-		"last_rebuild_time":           "",
-		"last_success_time":           "",
-		"last_failure_time":           "",
-		"last_rebuild_duration_ms":    0,
-		"best_rebuild_duration_ms":    0,
-		"worst_rebuild_duration_ms":   0,
-		"average_rebuild_duration_ms": 0,
-		"last_status":                 "",
-		"last_command":                "",
-		"last_error":                  "",
-		"history_limit":               0,
-		"rebuild_history":             []RebuildEntry{},
-	}
+func CreateStatsDB() error {
+	fmt.Println("Creating stats.db...")
+	schema := `
+CREATE TABLE IF NOT EXISTS rebuilds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  success INTEGER NOT NULL,
+  exit_code INTEGER,
+  command TEXT NOT NULL,
+  error_message TEXT,
+  diff_files_changed INTEGER NOT NULL,
+  diff_added_lines INTEGER NOT NULL,
+  diff_deleted_lines INTEGER NOT NULL,
+  diff_total_lines INTEGER NOT NULL
+);
 
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	err = os.WriteFile(".vnix/stats.json", data, 0644)
-	if err != nil {
-		return err
-	}
-
-	return nil
+CREATE INDEX IF NOT EXISTS idx_rebuilds_started_at ON rebuilds(started_at);
+CREATE INDEX IF NOT EXISTS idx_rebuilds_success ON rebuilds(success);
+`
+	cmd := exec.Command("sqlite3", ".vnix/stats.db")
+	cmd.Stdin = strings.NewReader(schema)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func CreateVNIXPackageFile() error {

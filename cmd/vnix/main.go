@@ -30,7 +30,7 @@ func main() {
 	case "search":
 		SearchCommand()
 	case "stats":
-		_ = StatsCommand()
+		fmt.Println("Stats command is not implemented yet.")
 	case "rebuild":
 		if err := RebuildCommand(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
