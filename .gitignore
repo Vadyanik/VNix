@@ -31,6 +31,6 @@ go.work.sum
 # .idea/
 # .vscode/
 .vnix/
-vnix
+/vnix
 modules/
 AGENTS.md
