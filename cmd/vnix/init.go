@@ -1,10 +1,12 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
+
+	_ "modernc.org/sqlite"
 )
 
 func InitCommand() error {
@@ -102,11 +104,14 @@ CREATE TABLE IF NOT EXISTS rebuilds (
 CREATE INDEX IF NOT EXISTS idx_rebuilds_started_at ON rebuilds(started_at);
 CREATE INDEX IF NOT EXISTS idx_rebuilds_success ON rebuilds(success);
 `
-	cmd := exec.Command("sqlite3", ".vnix/stats.db")
-	cmd.Stdin = strings.NewReader(schema)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	db, err := sql.Open("sqlite", ".vnix/stats.db")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	_, err = db.Exec(schema)
+	return err
 }
 
 func CreateVNIXPackageFile() error {
