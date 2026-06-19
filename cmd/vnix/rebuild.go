@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 type Config struct {
@@ -91,11 +94,45 @@ func runRebuildCommand(command string) error {
 }
 
 func updateStats(entry RebuildEntry) error {
-	sql := buildInsertSQL(entry)
-	cmd := exec.Command("sqlite3", ".vnix/stats.db", sql)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	db, err := sql.Open("sqlite", ".vnix/stats.db")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	var exitCode any
+	if entry.ExitCode != nil {
+		exitCode = *entry.ExitCode
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO rebuilds (
+			started_at,
+			finished_at,
+			duration_ms,
+			success,
+			exit_code,
+			command,
+			error_message,
+			diff_files_changed,
+			diff_added_lines,
+			diff_deleted_lines,
+			diff_total_lines
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		entry.StartedAt,
+		entry.FinishedAt,
+		entry.DurationMs,
+		boolToInt(entry.Success),
+		exitCode,
+		entry.Command,
+		entry.ErrorMessage,
+		entry.DiffFilesChanged,
+		entry.DiffAddedLines,
+		entry.DiffDeletedLines,
+		entry.DiffTotalLines,
+	)
+	return err
 }
 
 func statusFor(success bool) string {
@@ -170,32 +207,6 @@ func diffLineSum(stats map[string][2]int, index int) int {
 		total += value[index]
 	}
 	return total
-}
-
-func buildInsertSQL(entry RebuildEntry) string {
-	exitCode := "NULL"
-	if entry.ExitCode != nil {
-		exitCode = strconv.Itoa(*entry.ExitCode)
-	}
-	errorMessage := sqlString(entry.ErrorMessage)
-	return fmt.Sprintf(
-		"INSERT INTO rebuilds (started_at, finished_at, duration_ms, success, exit_code, command, error_message, diff_files_changed, diff_added_lines, diff_deleted_lines, diff_total_lines) VALUES (%s, %s, %d, %d, %s, %s, %s, %d, %d, %d, %d);",
-		sqlString(entry.StartedAt),
-		sqlString(entry.FinishedAt),
-		entry.DurationMs,
-		boolToInt(entry.Success),
-		exitCode,
-		sqlString(entry.Command),
-		errorMessage,
-		entry.DiffFilesChanged,
-		entry.DiffAddedLines,
-		entry.DiffDeletedLines,
-		entry.DiffTotalLines,
-	)
-}
-
-func sqlString(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func boolToInt(value bool) int {
