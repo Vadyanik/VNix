@@ -29,11 +29,6 @@ func InstallCommand(packageNames ...string) error {
 		seen[packageName] = struct{}{}
 	}
 
-	_, err := os.Stat("modules/vnix_packages.nix")
-	if err != nil {
-		return err
-	}
-
 	data, err := os.ReadFile("modules/vnix_packages.nix")
 	if err != nil {
 		return err

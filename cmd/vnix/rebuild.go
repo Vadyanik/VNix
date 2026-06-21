@@ -135,13 +135,6 @@ func updateStats(entry RebuildEntry) error {
 	return err
 }
 
-func statusFor(success bool) string {
-	if success {
-		return "success"
-	}
-	return "failure"
-}
-
 func gitDiffNumstat() (map[string][2]int, error) {
 	cmd := exec.Command("git", "diff", "--numstat", "--no-ext-diff", "--ignore-submodules=dirty", "HEAD", "--")
 	output, err := cmd.Output()
