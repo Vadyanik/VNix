@@ -27,8 +27,6 @@ func main() {
 		} else {
 			fmt.Println("Usage: vnix install <package> [package...]")
 		}
-	case "search":
-		SearchCommand()
 	case "stats":
 		if err := StatsCommand(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
