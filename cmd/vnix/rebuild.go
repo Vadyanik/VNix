@@ -14,7 +14,9 @@ import (
 )
 
 type Config struct {
-	RebuildCommand string `json:"rebuild_command"`
+	ManagedPackagesFile string `json:"managed_packages_file"`
+	RebuildCommand      string `json:"rebuild_command"`
+	NixpkgsBranch       string `json:"nixpkgs_branch"`
 }
 
 type RebuildEntry struct {
