@@ -48,6 +48,6 @@ vnix stats
 
 GitHub Actions: build and test on every push/PR to `main`.
 
-## Лицензия
+## License
 
 MIT
