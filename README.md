@@ -1,33 +1,33 @@
 # VNix
 
-CLI-менеджер для управления пакетами в NixOS через marker block с отслеживанием истории `nixos-rebuild`.
+CLI manager for managing packages in NixOS via marker blocks with `nixos-rebuild` history tracking.
 
-## Команды
+## Commands
 
-| Команда | Описание |
+| Command | Description |
 |---------|----------|
-| `vnix init` | Создаёт структуру проекта: `.vnix/` (config + SQLite), `modules/vnix_packages.nix` с marker block |
-| `vnix search [--branch <branch>] <pkg>` | Ищет пакет через `nix search`, ранжирует результаты и ставит выбранное через `fzf` |
-| `vnix install <pkg...>` | Валидирует пакеты и добавляет их в marker block `# vnix:start` / `# vnix:end` |
-| `vnix rebuild` | Запускает `nixos-rebuild`, снимает `git diff` до/после, сохраняет результат в SQLite |
-| `vnix stats` | Показывает аналитику пересборок: успешность, длительность, изменения файлов |
+| `vnix init` | Creates project structure: `.vnix/` (config + SQLite), `modules/vnix_packages.nix` with marker blocks |
+| `vnix search [--branch <branch>] <pkg>` | Searches for a package via `nix search`, ranks results and pipes through `fzf` |
+| `vnix install <pkg...>` | Validates packages and adds them to the `# vnix:start` / `# vnix:end` marker block |
+| `vnix rebuild` | Runs `nixos-rebuild`, captures `git diff` before/after, saves result to SQLite |
+| `vnix stats` | Shows rebuild analytics: success rate, duration, file changes |
 
-## Структура проекта
+## Project Structure
 
 ```
 VNix/
 ├── cmd/vnix/
-│   ├── main.go         # CLI диспетчер
-│   ├── init.go         # Инициализация
-│   ├── install.go      # Установка пакетов
-│   ├── rebuild.go      # Пересборка + SQLite
-│   ├── stats.go        # Статистика
+│   ├── main.go         # CLI dispatcher
+│   ├── init.go         # Initialization
+│   ├── install.go      # Package installation
+│   ├── rebuild.go      # Rebuild + SQLite
+│   ├── stats.go        # Statistics
 ├── .github/workflows/  # CI (build + test)
 ├── go.mod / go.sum
 └── LICENSE
 ```
 
-## Использование
+## Usage
 
 ```bash
 vnix init
@@ -37,16 +37,16 @@ vnix rebuild
 vnix stats
 ```
 
-## Технологии
+## Technologies
 
-- **Go 1.25** — чистый Go, без CGO, без внешних CLI-фреймворков
-- **SQLite** (`modernc.org/sqlite`) — хранение истории пересборок
-- **Marker block** — вставка пакетов в Nix-файл через комментарии-маркеры
-- **Git diff** — отслеживание изменений файлов при пересборке
+- **Go 1.25** — pure Go, no CGO, no external CLI frameworks
+- **SQLite** (`modernc.org/sqlite`) — rebuild history storage
+- **Marker block** — inserting packages into Nix files via marker comments
+- **Git diff** — tracking file changes during rebuild
 
 ## CI
 
-GitHub Actions: сборка и тестирование на каждый push/PR в `main`.
+GitHub Actions: build and test on every push/PR to `main`.
 
 ## Лицензия
 

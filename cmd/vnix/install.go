@@ -18,13 +18,13 @@ func InstallCommand(packageNames ...string) error {
 	for _, packageName := range packageNames {
 		packageName = strings.TrimSpace(packageName)
 		if packageName == "" {
-			return fmt.Errorf("Валідація назви пакета: package name cannot be empty")
+			return fmt.Errorf("Package name validation: package name cannot be empty")
 		}
 		if !packageNamePattern.MatchString(packageName) {
-			return fmt.Errorf("Валідація назви пакета: invalid package name %q", packageName)
+			return fmt.Errorf("Package name validation: invalid package name %q", packageName)
 		}
 		if _, ok := seen[packageName]; ok {
-			return fmt.Errorf("Валідація назви пакета: duplicate package name %q in one command", packageName)
+			return fmt.Errorf("Package name validation: duplicate package name %q in one command", packageName)
 		}
 		seen[packageName] = struct{}{}
 	}
