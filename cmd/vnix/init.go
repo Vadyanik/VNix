@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -26,7 +27,9 @@ func InitCommand() error {
 
 	_, err = os.Stat(".vnix/config.json")
 	if os.IsNotExist(err) {
-		CreateConfig()
+		if err := CreateConfig(); err != nil {
+			return err
+		}
 	} else {
 		fmt.Println("config.json already exists, skipping...")
 	}
@@ -76,11 +79,61 @@ func InitCommand() error {
 
 func CreateConfig() error {
 	fmt.Println("Creating config.json...")
-	content := `{
+	branch, err := detectNixpkgsBranch()
+	if err != nil {
+		return err
+	}
+	content := fmt.Sprintf(`{
   "managed_packages_file": "modules/vnix_packages.nix",
-  "rebuild_command": "sudo nixos-rebuild switch --flake ."
-}`
+  "rebuild_command": "sudo nixos-rebuild switch --flake .",
+  "nixpkgs_branch": %q
+}`, branch)
 	return os.WriteFile(".vnix/config.json", []byte(content), 0644)
+}
+
+func detectNixpkgsBranch() (string, error) {
+	for _, path := range []string{"flake.nix", "flake.lock", "configuration.nix", "/etc/nixos/flake.nix", "/etc/nixos/flake.lock", "/etc/nixos/configuration.nix"} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if branch := nixpkgsBranchFromText(string(data)); branch != "" {
+			fmt.Printf("Detected nixpkgs branch: %s\n", branch)
+			return branch, nil
+		}
+	}
+
+	fmt.Print("Nixpkgs branch (example: unstable, 26.05): ")
+	var branch string
+	if _, err := fmt.Scanln(&branch); err != nil {
+		return "", err
+	}
+	return normalizeNixpkgsBranch(branch), nil
+}
+
+func nixpkgsBranchFromText(text string) string {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`github:NixOS/nixpkgs/([A-Za-z0-9._-]+)`),
+		regexp.MustCompile(`"owner"\s*:\s*"NixOS"[\s\S]*?"repo"\s*:\s*"nixpkgs"[\s\S]*?"ref"\s*:\s*"([A-Za-z0-9._-]+)"`),
+	}
+	for _, pattern := range patterns {
+		match := pattern.FindStringSubmatch(text)
+		if len(match) > 1 {
+			return normalizeNixpkgsBranch(match[1])
+		}
+	}
+	return ""
+}
+
+func normalizeNixpkgsBranch(branch string) string {
+	branch = strings.TrimSpace(branch)
+	if branch == "unstable" {
+		return "nixos-unstable"
+	}
+	if matched, _ := regexp.MatchString(`^[0-9]{2}\.[0-9]{2}$`, branch); matched {
+		return "nixos-" + branch
+	}
+	return branch
 }
 
 func CreateStatsDB() error {
