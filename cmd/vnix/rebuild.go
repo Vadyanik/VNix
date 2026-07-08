@@ -17,6 +17,25 @@ type Config struct {
 	ManagedPackagesFile string `json:"managed_packages_file"`
 	RebuildCommand      string `json:"rebuild_command"`
 	NixpkgsBranch       string `json:"nixpkgs_branch"`
+	GitAdd              *bool  `json:"git_add"`
+	GitCommit           *bool  `json:"git_commit"`
+	GitPush             *bool  `json:"git_push"`
+	CommitMessagePrefix string `json:"commit_message_prefix"`
+	Hooks               Hooks  `json:"hooks"`
+}
+
+type Hooks struct {
+	BeforeRebuild []string `json:"before_rebuild"`
+	AfterRebuild  []string `json:"after_rebuild"`
+	BeforeCommit  []string `json:"before_commit"`
+	AfterCommit   []string `json:"after_commit"`
+	AfterPush     []string `json:"after_push"`
+}
+
+type GitSteps struct {
+	Add    bool
+	Commit bool
+	Push   bool
 }
 
 type RebuildEntry struct {
@@ -38,7 +57,7 @@ func RebuildCommand() error {
 	if err != nil {
 		return err
 	}
-	return runRebuildCommand(config.RebuildCommand)
+	return runRebuildCommand(config)
 }
 
 func readConfig() (Config, error) {
@@ -54,14 +73,50 @@ func readConfig() (Config, error) {
 	return config, nil
 }
 
-func runRebuildCommand(command string) error {
+func runRebuildCommand(config Config) error {
+	hasChanges, err := gitHasChanges()
+	if err != nil {
+		return err
+	}
+	if !hasChanges {
+		fmt.Println("No changes found, rebuild skipped.")
+		return nil
+	}
+
+	command := "nixos-rebuild switch --flake . --quiet"
 	fmt.Printf("Executing rebuild command:\n %s\n", command)
 	startedAt := time.Now()
 	beforeDiff, _ := gitDiffNumstat()
-	cmd := exec.Command("sh", "-c", command)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	err := cmd.Run()
+	gitSteps := resolveGitSteps(config)
+
+	err = runHooks("before_rebuild", config.Hooks.BeforeRebuild)
+	if err == nil {
+		err = runCommand("nixos-rebuild", "switch", "--flake", ".", "--quiet")
+	}
+	if err == nil {
+		err = runHooks("after_rebuild", config.Hooks.AfterRebuild)
+	}
+	if err == nil && gitSteps.Add {
+		err = runCommand("git", "add", ".")
+	}
+	if err == nil && gitSteps.Commit {
+		err = runHooks("before_commit", config.Hooks.BeforeCommit)
+	}
+	if err == nil && gitSteps.Commit {
+		message := aicCommitMessage(config.CommitMessagePrefix)
+		printCommitMessage(message)
+		err = runCommand("git", "commit", "-m", message)
+	}
+	if err == nil && gitSteps.Commit {
+		err = runHooks("after_commit", config.Hooks.AfterCommit)
+	}
+	if err == nil && gitSteps.Push {
+		err = runCommand("git", "push")
+	}
+	if err == nil && gitSteps.Push {
+		err = runHooks("after_push", config.Hooks.AfterPush)
+	}
+
 	finishedAt := time.Now()
 	afterDiff, _ := gitDiffNumstat()
 
@@ -87,12 +142,100 @@ func runRebuildCommand(command string) error {
 			fmt.Println("Rebuild failed! Error:", err)
 		}
 	} else {
-		fmt.Println("Rebuild command executed successfully.")
+		fmt.Println("Rebuild completed successfully.")
 	}
 	if statsErr := updateStats(entry); statsErr != nil {
 		return statsErr
 	}
+	return err
+}
+
+func enabled(value *bool) bool {
+	return value == nil || *value
+}
+
+func resolveGitSteps(config Config) GitSteps {
+	steps := GitSteps{
+		Add:    enabled(config.GitAdd),
+		Commit: enabled(config.GitCommit),
+		Push:   enabled(config.GitPush),
+	}
+	if !steps.Add {
+		if steps.Commit {
+			fmt.Fprintln(os.Stderr, "Warning: git_add is disabled, so git_commit is disabled too.")
+		}
+		if steps.Push {
+			fmt.Fprintln(os.Stderr, "Warning: git_add is disabled, so git_push is disabled too.")
+		}
+		steps.Commit = false
+		steps.Push = false
+	}
+	if !steps.Commit && steps.Push {
+		fmt.Fprintln(os.Stderr, "Warning: git_commit is disabled, so git_push is disabled too.")
+		steps.Push = false
+	}
+	return steps
+}
+
+func gitHasChanges() (bool, error) {
+	output, err := exec.Command("git", "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("git status failed: %w\n%s", err, strings.TrimSpace(string(output)))
+	}
+	return strings.TrimSpace(string(output)) != "", nil
+}
+
+func runHooks(name string, hooks []string) error {
+	for _, hook := range hooks {
+		hook = strings.TrimSpace(hook)
+		if hook == "" {
+			continue
+		}
+		fmt.Printf("Running %s hook: %s\n", name, hook)
+		if err := runCommand("bash", "-c", hook); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func runCommand(name string, args ...string) error {
+	fmt.Println("$", name, strings.Join(args, " "))
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func aicCommitMessage(prefix string) string {
+	if _, err := exec.LookPath("aic"); err != nil {
+		fmt.Fprintln(os.Stderr, "aic is not installed or not in PATH; using fallback commit message")
+		return fallbackCommitMessage(prefix)
+	}
+
+	output, err := exec.Command("aic", "-p").CombinedOutput()
+	message := strings.TrimSpace(string(output))
+	if err != nil || message == "" {
+		fmt.Fprintf(os.Stderr, "aic failed; using fallback commit message: %v\n%s\n", err, message)
+		return fallbackCommitMessage(prefix)
+	}
+	return message
+}
+
+func printCommitMessage(message string) {
+	fmt.Println()
+	fmt.Println("========================================")
+	fmt.Println("Commit message:")
+	fmt.Println(message)
+	fmt.Println("========================================")
+	fmt.Println()
+}
+
+func fallbackCommitMessage(prefix string) string {
+	if strings.TrimSpace(prefix) == "" {
+		prefix = "rebuild"
+	}
+	return fmt.Sprintf("%s: %s", prefix, time.Now().Format("2006-01-02 15:04:05"))
 }
 
 func updateStats(entry RebuildEntry) error {
