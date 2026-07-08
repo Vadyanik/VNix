@@ -85,8 +85,18 @@ func CreateConfig() error {
 	}
 	content := fmt.Sprintf(`{
   "managed_packages_file": "modules/vnix_packages.nix",
-  "rebuild_command": "sudo nixos-rebuild switch --flake .",
-  "nixpkgs_branch": %q
+  "nixpkgs_branch": %q,
+  "git_add": true,
+  "git_commit": true,
+  "git_push": true,
+  "commit_message_prefix": "rebuild",
+  "hooks": {
+    "before_rebuild": [],
+    "after_rebuild": [],
+    "before_commit": [],
+    "after_commit": [],
+    "after_push": []
+  }
 }`, branch)
 	return os.WriteFile(".vnix/config.json", []byte(content), 0644)
 }
