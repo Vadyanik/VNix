@@ -61,6 +61,9 @@ func InstallCommand(packageNames ...string) error {
 	if added == 0 {
 		return nil
 	}
+	if _, err := createBackup(); err != nil {
+		return err
+	}
 
 	err = os.WriteFile("modules/vnix_packages.nix", []byte(content), 0644)
 	if err != nil {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,9 +50,50 @@ func TestGenerateCommitMessageRequiresAIConfiguration(t *testing.T) {
 	}
 }
 
+func TestRebuildDiagnosisPrompt(t *testing.T) {
+	prompt := rebuildDiagnosisPrompt(fmt.Errorf("exit status 1"), "failure details")
+	for _, expected := range []string{"exit status 1", "failure details", "Do not modify files"} {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("prompt is missing %q: %s", expected, prompt)
+		}
+	}
+}
+
+func TestGitChangePreviewShowsDiffAndUntrackedFiles(t *testing.T) {
+	setupRebuildTest(t, true)
+	if err := os.WriteFile("new-package.nix", []byte("new file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := gitChangePreview()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"M configuration.nix", "?? new-package.nix", "File: configuration.nix", "-initial", "+changed"} {
+		if !strings.Contains(preview, expected) {
+			t.Fatalf("preview is missing %q:\n%s", expected, preview)
+		}
+	}
+}
+
+func TestMinimalDiffOmitsGitMetadata(t *testing.T) {
+	diff := "diff --git a/test.nix b/test.nix\nindex 123..456 100644\n--- a/test.nix\n+++ b/test.nix\n@@ -1 +1 @@\n-old\n+new\n unchanged\n"
+	preview := minimalDiff(diff)
+	for _, expected := range []string{"File: test.nix", "@@ -1 +1 @@", "-old", "+new"} {
+		if !strings.Contains(preview, expected) {
+			t.Fatalf("preview is missing %q: %s", expected, preview)
+		}
+	}
+	if strings.Contains(preview, "index 123") || strings.Contains(preview, "unchanged") {
+		t.Fatalf("preview should omit metadata and unchanged context: %s", preview)
+	}
+}
+
 func TestRebuildFlowScenarios(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("OLLAMA_MODEL", "")
+	oldOpenCodeBinary := openCodeBinary
+	openCodeBinary = ""
+	t.Cleanup(func() { openCodeBinary = oldOpenCodeBinary })
 
 	t.Run("skips when git has no changes", func(t *testing.T) {
 		bin := setupRebuildTest(t, false)

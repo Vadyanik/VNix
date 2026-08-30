@@ -11,6 +11,9 @@ CLI manager for managing packages in NixOS via marker blocks with `nixos-rebuild
 | `vnix install <pkg...>` | Validates packages and adds them to the `# vnix:start` / `# vnix:end` marker block |
 | `vnix rebuild` | Runs `nixos-rebuild`, captures `git diff` before/after, saves result to SQLite |
 | `vnix stats` | Shows rebuild analytics: success rate, duration, file changes |
+| `vnix tui` | Interactive terminal UI for all VNix actions, including search without `fzf` |
+
+The TUI also provides rebuild plans and preflight checks, configurable security scanning, package profiles and editing, backups and restore, NixOS generation rollback, configuration drift checks, rebuild timeline details, and OpenCode patch previews that require explicit confirmation before application.
 
 ## Project Structure
 
@@ -31,6 +34,7 @@ VNix/
 ## Usage
 
 ```bash
+vnix tui
 vnix init
 vnix search firefox
 vnix install htop ripgrep
@@ -118,6 +122,7 @@ Adds one or more packages to the marker block in `modules/vnix_packages.nix`.
 Runs the configured rebuild command and records a full audit record to SQLite.
 
 - Generates the commit message internally from the staged diff. Store a Gemini key with `vnix key set-gemini`; it is entered without echo and stored as `$XDG_CONFIG_HOME/vnix/gemini-api-key` (usually `~/.config/vnix/gemini-api-key`) with mode `0600`. Ollama needs no key; set `OLLAMA_MODEL` to use it instead.
+- When a rebuild fails and `opencode` is available, VNix asks it for a read-only explanation and manual fix steps. The diagnosis never applies changes automatically.
 - Reads `.vnix/config.json` and executes `rebuild_command` through `sh -c`, streaming stdout/stderr live to the terminal.
 - Captures `git diff --numstat --no-ext-diff --ignore-submodules=dirty HEAD --` **before** and **after** the rebuild, then computes the delta between the two snapshots:
   - `diff_files_changed` — number of distinct files touched across the two snapshots;

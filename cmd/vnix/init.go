@@ -11,6 +11,10 @@ import (
 )
 
 func InitCommand() error {
+	return initCommand("")
+}
+
+func initCommand(branch string) error {
 	fmt.Println("Initializing VNIX...")
 
 	info, err := os.Stat(".vnix")
@@ -27,7 +31,12 @@ func InitCommand() error {
 
 	_, err = os.Stat(".vnix/config.json")
 	if os.IsNotExist(err) {
-		if err := CreateConfig(); err != nil {
+		if branch == "" {
+			err = CreateConfig()
+		} else {
+			err = CreateConfigWithBranch(branch)
+		}
+		if err != nil {
 			return err
 		}
 	} else {
@@ -83,6 +92,11 @@ func CreateConfig() error {
 	if err != nil {
 		return err
 	}
+	return CreateConfigWithBranch(branch)
+}
+
+func CreateConfigWithBranch(branch string) error {
+	branch = normalizeNixpkgsBranch(branch)
 	content := fmt.Sprintf(`{
   "managed_packages_file": "modules/vnix_packages.nix",
   "nixpkgs_branch": %q,
@@ -90,6 +104,7 @@ func CreateConfig() error {
   "git_commit": true,
   "git_push": true,
   "commit_message_prefix": "rebuild",
+  "security_scan_command": "",
   "hooks": {
     "before_rebuild": [],
     "after_rebuild": [],

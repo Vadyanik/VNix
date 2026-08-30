@@ -7,8 +7,10 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("VNix - CLI manager for NixOS")
-		fmt.Println("Usage: vnix <command>")
+		if err := TUICommand(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -45,6 +47,11 @@ func main() {
 			}
 		} else {
 			fmt.Println("Usage: vnix key set-gemini")
+		}
+	case "tui":
+		if err := TUICommand(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
 		}
 	case "search":
 		if err := SearchCommand(os.Args[2:]); err != nil {

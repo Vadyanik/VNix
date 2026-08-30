@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -23,6 +25,7 @@ type Config struct {
 	GitCommit           *bool  `json:"git_commit"`
 	GitPush             *bool  `json:"git_push"`
 	CommitMessagePrefix string `json:"commit_message_prefix"`
+	SecurityScanCommand string `json:"security_scan_command"`
 	Hooks               Hooks  `json:"hooks"`
 }
 
@@ -55,6 +58,8 @@ type RebuildEntry struct {
 }
 
 var aiHTTPClient = &http.Client{Timeout: 30 * time.Second}
+var openCodeBinary = "opencode"
+var lastRebuildDiagnosis string
 
 func RebuildCommand() error {
 	config, err := readConfig()
@@ -78,6 +83,7 @@ func readConfig() (Config, error) {
 }
 
 func runRebuildCommand(config Config) error {
+	lastRebuildDiagnosis = ""
 	hasChanges, err := gitHasChanges()
 	if err != nil {
 		return err
@@ -86,6 +92,17 @@ func runRebuildCommand(config Config) error {
 		fmt.Println("No changes found, rebuild skipped.")
 		return nil
 	}
+	preview, err := gitChangePreview()
+	if err != nil {
+		return err
+	}
+	fmt.Println("Changes to be applied:")
+	fmt.Print(colorizeChangePreview(preview))
+	if backup, err := createBackup(); err != nil {
+		return fmt.Errorf("create rebuild backup: %w", err)
+	} else {
+		fmt.Println("Backup created:", backup.Name)
+	}
 
 	command := "nixos-rebuild switch --flake . --quiet"
 	fmt.Printf("Executing rebuild command:\n %s\n", command)
@@ -93,12 +110,18 @@ func runRebuildCommand(config Config) error {
 	beforeDiff, _ := gitDiffNumstat()
 	gitSteps := resolveGitSteps(config)
 
+	var rebuildOutput string
 	err = runHooks("before_rebuild", config.Hooks.BeforeRebuild)
 	if err == nil {
-		err = runCommand("nixos-rebuild", "switch", "--flake", ".", "--quiet")
+		rebuildOutput, err = runRebuildSystem()
 	}
 	if err == nil {
 		err = runHooks("after_rebuild", config.Hooks.AfterRebuild)
+	}
+	if err == nil && strings.TrimSpace(config.SecurityScanCommand) != "" {
+		result, scanErr := runSecurityScan(config.SecurityScanCommand)
+		fmt.Printf("Running security scan:\n$ %s\n%s\n", result.Command, result.Output)
+		err = scanErr
 	}
 	if err == nil && gitSteps.Add {
 		err = runCommand("git", "add", ".")
@@ -151,6 +174,12 @@ func runRebuildCommand(config Config) error {
 	if statsErr := updateStats(entry); statsErr != nil {
 		return statsErr
 	}
+	if err != nil {
+		lastRebuildDiagnosis = diagnoseRebuildFailure(err, rebuildOutput)
+		if lastRebuildDiagnosis != "" {
+			fmt.Println("\nOpenCode diagnosis:\n" + lastRebuildDiagnosis)
+		}
+	}
 	return err
 }
 
@@ -189,6 +218,76 @@ func gitHasChanges() (bool, error) {
 	return strings.TrimSpace(string(output)) != "", nil
 }
 
+func gitChangePreview() (string, error) {
+	status, err := exec.Command("git", "status", "--short").Output()
+	if err != nil {
+		return "", fmt.Errorf("git status failed: %w", err)
+	}
+	diff, err := exec.Command("git", "diff", "--no-ext-diff", "--ignore-submodules=dirty", "HEAD", "--").Output()
+	if err != nil {
+		return "", fmt.Errorf("git diff failed: %w", err)
+	}
+	preview := "Files:\n" + strings.TrimSpace(string(status))
+	if len(diff) > 0 {
+		preview += "\n\nChanges:\n" + minimalDiff(string(diff))
+	}
+	return preview, nil
+}
+
+func minimalDiff(diff string) string {
+	var lines []string
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "diff --git ") {
+			fields := strings.Fields(line)
+			if len(fields) >= 4 {
+				lines = append(lines, "\nFile: "+strings.TrimPrefix(fields[3], "b/"))
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "@@") {
+			lines = append(lines, line)
+			continue
+		}
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			lines = append(lines, line)
+			continue
+		}
+		if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+			lines = append(lines, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func colorizeChangePreview(preview string) string {
+	const (
+		reset  = "\033[0m"
+		cyan   = "\033[36m"
+		green  = "\033[32m"
+		red    = "\033[31m"
+		yellow = "\033[33m"
+	)
+	var lines []string
+	for _, line := range strings.Split(preview, "\n") {
+		color := ""
+		switch {
+		case strings.HasPrefix(line, "+") || strings.HasPrefix(line, "??"):
+			color = green
+		case strings.HasPrefix(line, "-") || strings.HasPrefix(line, " D") || strings.HasPrefix(line, "D "):
+			color = red
+		case strings.HasPrefix(line, " M") || strings.HasPrefix(line, "M "):
+			color = yellow
+		case strings.HasPrefix(line, "Files:") || strings.HasPrefix(line, "Changes:") || strings.HasPrefix(line, "File:") || strings.HasPrefix(line, "@@"):
+			color = cyan
+		}
+		if color != "" {
+			line = color + line + reset
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
 func runHooks(name string, hooks []string) error {
 	for _, hook := range hooks {
 		hook = strings.TrimSpace(hook)
@@ -209,6 +308,54 @@ func runCommand(name string, args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func runRebuildSystem() (string, error) {
+	var output bytes.Buffer
+	cmd := exec.Command("nixos-rebuild", "switch", "--flake", ".", "--quiet")
+	cmd.Stdout = io.MultiWriter(os.Stdout, &output)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &output)
+	err := cmd.Run()
+	return output.String(), err
+}
+
+func diagnoseRebuildFailure(rebuildErr error, output string) string {
+	if openCodeBinary == "" {
+		return ""
+	}
+	if _, err := exec.LookPath(openCodeBinary); err != nil {
+		fmt.Fprintln(os.Stderr, "OpenCode is not available; skipping rebuild diagnosis.")
+		return ""
+	}
+	prompt := rebuildDiagnosisPrompt(rebuildErr, output)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	result, err := exec.CommandContext(ctx, openCodeBinary, "run", "--pure", "--title", "VNix rebuild failure", prompt).CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "OpenCode diagnosis failed: %v\n", err)
+		return ""
+	}
+	return strings.TrimSpace(string(result))
+}
+
+func rebuildDiagnosisPrompt(rebuildErr error, output string) string {
+	if strings.TrimSpace(output) == "" {
+		output = "No command output was captured."
+	}
+	return fmt.Sprintf(`A VNix NixOS rebuild failed. Do not modify files, execute commands, or use tools. Explain the likely cause from the context below and propose numbered manual steps to fix it. If the context is insufficient, say exactly what the user should inspect.
+
+Rebuild error:
+%s
+
+Captured nixos-rebuild output:
+%s`, rebuildErr, truncateDiagnostic(output, 12000))
+}
+
+func truncateDiagnostic(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "\n[output truncated]"
 }
 
 func aiCommitMessage(prefix string) string {
