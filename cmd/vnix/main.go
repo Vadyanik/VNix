@@ -37,6 +37,15 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+	case "key":
+		if len(os.Args) == 3 && os.Args[2] == "set-gemini" {
+			if err := SetGeminiKeyCommand(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Println("Usage: vnix key set-gemini")
+		}
 	case "search":
 		if err := SearchCommand(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)

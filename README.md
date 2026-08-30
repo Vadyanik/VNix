@@ -117,6 +117,7 @@ Adds one or more packages to the marker block in `modules/vnix_packages.nix`.
 
 Runs the configured rebuild command and records a full audit record to SQLite.
 
+- Generates the commit message internally from the staged diff. Store a Gemini key with `vnix key set-gemini`; it is entered without echo and stored as `$XDG_CONFIG_HOME/vnix/gemini-api-key` (usually `~/.config/vnix/gemini-api-key`) with mode `0600`. Ollama needs no key; set `OLLAMA_MODEL` to use it instead.
 - Reads `.vnix/config.json` and executes `rebuild_command` through `sh -c`, streaming stdout/stderr live to the terminal.
 - Captures `git diff --numstat --no-ext-diff --ignore-submodules=dirty HEAD --` **before** and **after** the rebuild, then computes the delta between the two snapshots:
   - `diff_files_changed` — number of distinct files touched across the two snapshots;

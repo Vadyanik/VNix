@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -51,6 +53,8 @@ type RebuildEntry struct {
 	DiffDeletedLines int    `json:"diff_deleted_lines"`
 	DiffTotalLines   int    `json:"diff_total_lines"`
 }
+
+var aiHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 func RebuildCommand() error {
 	config, err := readConfig()
@@ -103,7 +107,7 @@ func runRebuildCommand(config Config) error {
 		err = runHooks("before_commit", config.Hooks.BeforeCommit)
 	}
 	if err == nil && gitSteps.Commit {
-		message := aicCommitMessage(config.CommitMessagePrefix)
+		message := aiCommitMessage(config.CommitMessagePrefix)
 		printCommitMessage(message)
 		err = runCommand("git", "commit", "-m", message)
 	}
@@ -207,19 +211,106 @@ func runCommand(name string, args ...string) error {
 	return cmd.Run()
 }
 
-func aicCommitMessage(prefix string) string {
-	if _, err := exec.LookPath("aic"); err != nil {
-		fmt.Fprintln(os.Stderr, "aic is not installed or not in PATH; using fallback commit message")
+func aiCommitMessage(prefix string) string {
+	diff, err := exec.Command("git", "diff", "--cached", "--", ".").Output()
+	if err != nil || len(diff) == 0 {
 		return fallbackCommitMessage(prefix)
 	}
-
-	output, err := exec.Command("aic", "-p").CombinedOutput()
-	message := strings.TrimSpace(string(output))
-	if err != nil || message == "" {
-		fmt.Fprintf(os.Stderr, "aic failed; using fallback commit message: %v\n%s\n", err, message)
+	history, _ := exec.Command("git", "log", "-n", "10", "--format=%s").Output()
+	message, err := generateCommitMessage(string(diff), string(history))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "AI commit message unavailable; using fallback: %v\n", err)
 		return fallbackCommitMessage(prefix)
 	}
 	return message
+}
+
+func generateCommitMessage(diff, history string) (string, error) {
+	prompt := fmt.Sprintf("Write a concise Conventional Commit message for this git diff. Output only the message, without quotes or explanation. Keep it under 50 words. Match this repository's recent commit style:\n%s\n\nDiff:\n%s", history, diff)
+	key, err := geminiAPIKey()
+	if err != nil {
+		return "", err
+	}
+	if key != "" {
+		message, err := askGemini(key, prompt)
+		if err == nil {
+			return message, nil
+		}
+		if model := os.Getenv("OLLAMA_MODEL"); model != "" {
+			return askOllama(model, prompt)
+		}
+		return "", err
+	}
+	if model := os.Getenv("OLLAMA_MODEL"); model != "" {
+		return askOllama(model, prompt)
+	}
+	return "", fmt.Errorf("configure Gemini with 'vnix key set-gemini' or set OLLAMA_MODEL")
+}
+
+func askGemini(key, prompt string) (string, error) {
+	body, err := json.Marshal(map[string]any{"contents": []any{map[string]any{"parts": []any{map[string]string{"text": prompt}}}}})
+	if err != nil {
+		return "", err
+	}
+	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" + key
+	response, err := aiHTTPClient.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("Gemini returned %s", response.Status)
+	}
+	var result struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	if len(result.Candidates) == 0 || len(result.Candidates[0].Content.Parts) == 0 {
+		return "", fmt.Errorf("Gemini returned no message")
+	}
+	return cleanCommitMessage(result.Candidates[0].Content.Parts[0].Text)
+}
+
+func askOllama(model, prompt string) (string, error) {
+	body, err := json.Marshal(map[string]any{"model": model, "prompt": prompt, "stream": false})
+	if err != nil {
+		return "", err
+	}
+	host := strings.TrimRight(os.Getenv("OLLAMA_HOST"), "/")
+	if host == "" {
+		host = "http://localhost:11434"
+	}
+	response, err := aiHTTPClient.Post(host+"/api/generate", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("Ollama returned %s", response.Status)
+	}
+	var result struct {
+		Response string `json:"response"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	return cleanCommitMessage(result.Response)
+}
+
+func cleanCommitMessage(message string) (string, error) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return "", fmt.Errorf("AI returned an empty message")
+	}
+	return message, nil
 }
 
 func printCommitMessage(message string) {

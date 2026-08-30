@@ -41,7 +41,18 @@ func TestFallbackCommitMessage(t *testing.T) {
 	}
 }
 
+func TestGenerateCommitMessageRequiresAIConfiguration(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OLLAMA_MODEL", "")
+	if _, err := generateCommitMessage("diff", "history"); err == nil {
+		t.Fatal("expected missing AI configuration error")
+	}
+}
+
 func TestRebuildFlowScenarios(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OLLAMA_MODEL", "")
+
 	t.Run("skips when git has no changes", func(t *testing.T) {
 		bin := setupRebuildTest(t, false)
 		writeScript(t, bin, "nixos-rebuild", ": > nixos-ran\n")
@@ -57,7 +68,6 @@ func TestRebuildFlowScenarios(t *testing.T) {
 	t.Run("stops when rebuild fails", func(t *testing.T) {
 		bin := setupRebuildTest(t, true)
 		writeScript(t, bin, "nixos-rebuild", "exit 7\n")
-		writeScript(t, bin, "aic", "printf 'feat: should not commit'\n")
 
 		if err := runRebuildCommand(Config{}); err == nil {
 			t.Fatal("expected rebuild error")
@@ -67,15 +77,14 @@ func TestRebuildFlowScenarios(t *testing.T) {
 		}
 	})
 
-	t.Run("commits and pushes with aic message", func(t *testing.T) {
+	t.Run("commits and pushes with fallback message", func(t *testing.T) {
 		bin := setupRebuildTest(t, true)
 		writeScript(t, bin, "nixos-rebuild", "exit 0\n")
-		writeScript(t, bin, "aic", "printf 'feat: test rebuild'\n")
 
 		if err := runRebuildCommand(Config{}); err != nil {
 			t.Fatal(err)
 		}
-		if got := gitOutput(t, "log", "-1", "--format=%s"); got != "feat: test rebuild" {
+		if got := gitOutput(t, "log", "-1", "--format=%s"); !strings.HasPrefix(got, "rebuild: ") {
 			t.Fatalf("unexpected commit message: %q", got)
 		}
 		local := gitOutput(t, "rev-parse", "HEAD")
@@ -85,7 +94,7 @@ func TestRebuildFlowScenarios(t *testing.T) {
 		}
 	})
 
-	t.Run("uses fallback message when aic is missing", func(t *testing.T) {
+	t.Run("uses fallback message when AI is unavailable", func(t *testing.T) {
 		bin := setupRebuildTest(t, true)
 		writeScript(t, bin, "nixos-rebuild", "exit 0\n")
 		noPush := false
@@ -105,7 +114,6 @@ func TestRebuildFlowScenarios(t *testing.T) {
 	t.Run("honors disabled commit push and hooks", func(t *testing.T) {
 		bin := setupRebuildTest(t, true)
 		writeScript(t, bin, "nixos-rebuild", "exit 0\n")
-		writeScript(t, bin, "aic", "printf 'feat: should not run'\n")
 		noCommit := false
 		noPush := false
 
@@ -138,7 +146,6 @@ func TestRebuildFlowScenarios(t *testing.T) {
 	t.Run("disabled git add cascades to commit and push", func(t *testing.T) {
 		bin := setupRebuildTest(t, true)
 		writeScript(t, bin, "nixos-rebuild", "exit 0\n")
-		writeScript(t, bin, "aic", "printf 'feat: should not run'\n")
 		noAdd := false
 		yesCommit := true
 		yesPush := true
