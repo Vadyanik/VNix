@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
+  <title id="title">VNix terminal dashboard</title>
+  <desc id="desc">A dark terminal interface showing VNix commands and workspace status.</desc>
+  <rect width="1200" height="680" fill="#11111b"/>
+  <rect x="28" y="28" width="1144" height="624" rx="18" fill="#1e1e2e" stroke="#313244" stroke-width="2"/>
+  <circle cx="60" cy="60" r="8" fill="#f38ba8"/><circle cx="86" cy="60" r="8" fill="#f9e2af"/><circle cx="112" cy="60" r="8" fill="#a6e3a1"/>
+  <text x="600" y="66" fill="#a6adc8" font-family="monospace" font-size="17" text-anchor="middle">vnix tui</text>
+  <rect x="54" y="94" width="1092" height="75" rx="8" fill="#181825"/>
+  <text x="82" y="128" fill="#cba6f7" font-family="monospace" font-size="29" font-weight="bold">VNix</text>
+  <text x="82" y="153" fill="#6c7086" font-family="monospace" font-size="16">/ NixOS configuration cockpit</text>
+  <text x="680" y="136" fill="#94e2d5" font-family="monospace" font-size="17">review</text>
+  <text x="755" y="136" fill="#6c7086" font-family="monospace" font-size="17">--&gt;</text>
+  <text x="810" y="136" fill="#89b4fa" font-family="monospace" font-size="17">validate</text>
+  <text x="900" y="136" fill="#6c7086" font-family="monospace" font-size="17">--&gt;</text>
+  <text x="956" y="136" fill="#a6e3a1" font-family="monospace" font-size="17">apply</text>
+  <rect x="54" y="190" width="265" height="400" rx="8" fill="#181825"/>
+  <text x="78" y="225" fill="#6c7086" font-family="monospace" font-size="15">COMMANDS</text>
+  <rect x="70" y="244" width="233" height="35" rx="5" fill="#313244"/>
+  <text x="88" y="267" fill="#cba6f7" font-family="monospace" font-size="17" font-weight="bold">INITIALIZE</text>
+  <g fill="#a6adc8" font-family="monospace" font-size="16"><text x="88" y="311">SEARCH</text><text x="88" y="351">ADD</text><text x="88" y="391">PLAN</text><text x="88" y="431">REBUILD</text><text x="88" y="471">PROFILES</text><text x="88" y="511">BACKUPS</text><text x="88" y="551">TIMELINE</text></g>
+  <rect x="343" y="190" width="803" height="400" rx="8" fill="#181825"/>
+  <text x="383" y="246" fill="#cba6f7" font-family="monospace" font-size="28" font-weight="bold">INITIALIZE</text>
+  <text x="383" y="290" fill="#cdd6f4" font-family="monospace" font-size="18">Create the local VNix workspace and managed Nix module.</text>
+  <text x="383" y="344" fill="#6c7086" font-family="monospace" font-size="16">Shortcut</text><text x="500" y="344" fill="#89b4fa" font-family="monospace" font-size="16">I</text>
+  <text x="383" y="405" fill="#6c7086" font-family="monospace" font-size="16">Workspace</text>
+  <text x="383" y="443" fill="#a6adc8" font-family="monospace" font-size="17">Git        </text><text x="530" y="443" fill="#a6e3a1" font-family="monospace" font-size="17">clean</text>
+  <text x="383" y="478" fill="#a6adc8" font-family="monospace" font-size="17">Packages   </text><text x="530" y="478" fill="#cdd6f4" font-family="monospace" font-size="17">12 managed</text>
+  <text x="383" y="513" fill="#a6adc8" font-family="monospace" font-size="17">Timeline   </text><text x="530" y="513" fill="#cdd6f4" font-family="monospace" font-size="17">8 runs</text>
+  <text x="383" y="560" fill="#a6adc8" font-family="monospace" font-size="15">Open the rebuild plan before switching the system.</text>
+  <rect x="54" y="610" width="1092" height="22" rx="5" fill="#181825"/>
+  <text x="72" y="626" fill="#6c7086" font-family="monospace" font-size="14">VNix is ready. Choose an action with arrows, Enter, or its shortcut.</text>
+</svg>
