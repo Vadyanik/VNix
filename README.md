@@ -12,6 +12,14 @@ CLI manager for managing packages in NixOS via marker blocks with `nixos-rebuild
 | `vnix rebuild` | Runs `nixos-rebuild`, captures `git diff` before/after, saves result to SQLite |
 | `vnix stats` | Shows rebuild analytics: success rate, duration, file changes |
 | `vnix tui` | Interactive terminal UI for all VNix actions, including search without `fzf` |
+| `vnix plan` | Shows source diff and runs rebuild preflight checks |
+| `vnix packages [list|set ...]` | Lists or replaces managed package attributes |
+| `vnix profile [list|save|apply]` | Manages named package profiles |
+| `vnix generations [list|switch]` | Lists or switches NixOS generations |
+| `vnix drift` | Compares Git, active system, and system profile state |
+| `vnix security [run|set]` | Configures or runs the security scanner |
+| `vnix backups [list|restore]` | Lists or restores configuration backups |
+| `vnix ai-patch [propose|apply]` | Proposes or explicitly applies an OpenCode patch |
 
 The TUI also provides rebuild plans and preflight checks, configurable security scanning, package profiles and editing, backups and restore, NixOS generation rollback, configuration drift checks, rebuild timeline details, and OpenCode patch previews that require explicit confirmation before application.
 
@@ -76,7 +84,7 @@ Initializes a VNix project in the current directory. The operation is **idempote
 - Creates the `.vnix/` directory (fails if `.vnix` exists as a regular file, not a directory).
 - Creates `.vnix/config.json` with three fields:
   - `managed_packages_file` — path to the managed Nix file (default `modules/vnix_packages.nix`);
-  - `rebuild_command` — the shell command executed by `vnix rebuild` (default `sudo nixos-rebuild switch --flake .`);
+  - `rebuild_command` — the shell command executed by `vnix rebuild` (default `nixos-rebuild switch --flake . --quiet`);
   - `nixpkgs_branch` — the nixpkgs ref used by `vnix search`.
 - **Auto-detects the nixpkgs branch** by scanning, in order: `flake.nix`, `flake.lock`, `configuration.nix`, `/etc/nixos/flake.nix`, `/etc/nixos/flake.lock`, `/etc/nixos/configuration.nix`. Two patterns are matched: `github:NixOS/nixpkgs/<ref>` and the flake-lock JSON form (`"owner": "NixOS"` + `"repo": "nixpkgs"` + `"ref": "..."`).
 - **Branch normalization**: `unstable` → `nixos-unstable`; a bare `YY.MM` (e.g. `26.05`) → `nixos-26.05`; anything else is used verbatim.
@@ -108,7 +116,7 @@ Searches nixpkgs interactively and installs the chosen package(s) in one go.
 
 #### `vnix install <pkg...>`
 
-Adds one or more packages to the marker block in `modules/vnix_packages.nix`.
+Adds one or more packages to the marker block in `managed_packages_file` (default `modules/vnix_packages.nix`).
 
 - **Validation** (per package): non-empty after trim; matches `^[A-Za-z0-9._+-]+$`; no duplicates within the same invocation. Any violation aborts the whole command with a precise error.
 - Requires the managed file to contain both `# vnix:start` and `# vnix:end` markers, with `start` appearing before `end`; otherwise the command errors out.
@@ -123,10 +131,10 @@ Runs the configured rebuild command and records a full audit record to SQLite.
 
 - Generates the commit message internally from the staged diff. Store a Gemini key with `vnix key set-gemini`; it is entered without echo and stored as `$XDG_CONFIG_HOME/vnix/gemini-api-key` (usually `~/.config/vnix/gemini-api-key`) with mode `0600`. Ollama needs no key; set `OLLAMA_MODEL` to use it instead.
 - When a rebuild fails and `opencode` is available, VNix asks it for a read-only explanation and manual fix steps. The diagnosis never applies changes automatically.
-- Reads `.vnix/config.json` and executes `rebuild_command` through `sh -c`, streaming stdout/stderr live to the terminal.
-- Captures `git diff --numstat --no-ext-diff --ignore-submodules=dirty HEAD --` **before** and **after** the rebuild, then computes the delta between the two snapshots:
-  - `diff_files_changed` — number of distinct files touched across the two snapshots;
-  - `diff_added_lines` / `diff_deleted_lines` — added/deleted lines from the post-rebuild snapshot;
+- Reads `.vnix/config.json` and executes `rebuild_command` through `bash -c`, streaming stdout/stderr live to the terminal.
+- Captures pending `git diff --numstat --no-ext-diff --ignore-submodules=dirty HEAD --` when the rebuild starts:
+  - `diff_files_changed` — number of changed files submitted for rebuild;
+  - `diff_added_lines` / `diff_deleted_lines` — pending added/deleted lines submitted for rebuild;
   - `diff_total_lines` — added + deleted.
   Binary files (numstat `-`) are counted as 0 lines.
 - Measures `started_at`, `finished_at` (RFC 3339) and `duration_ms`.
@@ -146,10 +154,15 @@ Reads the SQLite history and prints rebuild analytics.
 ```json
 {
   "managed_packages_file": "modules/vnix_packages.nix",
-  "rebuild_command": "sudo nixos-rebuild switch --flake .",
-  "nixpkgs_branch": "nixos-unstable"
+  "rebuild_command": "nixos-rebuild switch --flake . --quiet",
+  "nixpkgs_branch": "nixos-unstable",
+  "git_add": false,
+  "git_commit": false,
+  "git_push": false
 }
 ```
+
+Git actions are disabled by default. When explicitly enabled, VNix stages only `managed_packages_file`; it never runs `git add .`.
 
 #### SQLite schema (`.vnix/stats.db`)
 
@@ -189,7 +202,7 @@ VNix — консольная утилита для NixOS, которая хра
 - Создаёт каталог `.vnix/` (завершается ошибкой, если `.vnix` существует как обычный файл, а не каталог).
 - Создаёт `.vnix/config.json` с тремя полями:
   - `managed_packages_file` — путь к управляемому Nix-файлу (по умолчанию `modules/vnix_packages.nix`);
-  - `rebuild_command` — команда оболочки, выполняемая `vnix rebuild` (по умолчанию `sudo nixos-rebuild switch --flake .`);
+  - `rebuild_command` — команда оболочки, выполняемая `vnix rebuild` (по умолчанию `nixos-rebuild switch --flake . --quiet`);
   - `nixpkgs_branch` — ref nixpkgs, используемый командой `vnix search`.
 - **Автоопределение ветки nixpkgs** по порядку сканирует: `flake.nix`, `flake.lock`, `configuration.nix`, `/etc/nixos/flake.nix`, `/etc/nixos/flake.lock`, `/etc/nixos/configuration.nix`. Сопоставляются два шаблона: `github:NixOS/nixpkgs/<ref>` и JSON-форма flake-lock (`"owner": "NixOS"` + `"repo": "nixpkgs"` + `"ref": "..."`).
 - **Нормализация ветки**: `unstable` → `nixos-unstable`; `YY.MM` (например `26.05`) → `nixos-26.05`; прочее используется как есть.
@@ -221,7 +234,7 @@ VNix — консольная утилита для NixOS, которая хра
 
 #### `vnix install <pkg...>`
 
-Добавляет один или несколько пакетов в маркерный блок `modules/vnix_packages.nix`.
+Добавляет один или несколько пакетов в маркерный блок `managed_packages_file` (по умолчанию `modules/vnix_packages.nix`).
 
 - **Валидация** (для каждого пакета): непустой после обрезки пробелов; соответствует `^[A-Za-z0-9._+-]+$`; без дубликатов в рамках одного вызова. Любое нарушение прерывает всю команду с точным сообщением об ошибке.
 - Требуется, чтобы в управляемом файле присутствовали оба маркера `# vnix:start` и `# vnix:end`, причём `start` должен идти до `end`; иначе команда завершается ошибкой.
@@ -234,10 +247,10 @@ VNix — консольная утилита для NixOS, которая хра
 
 Запускает настроенную команду пересборки и записывает в SQLite полную запись аудита.
 
-- Читает `.vnix/config.json` и выполняет `rebuild_command` через `sh -c`, транслируя stdout/stderr в терминал в реальном времени.
-- Снимает `git diff --numstat --no-ext-diff --ignore-submodules=dirty HEAD --` **до** и **после** пересборки, затем вычисляет разницу между двумя снимками:
-  - `diff_files_changed` — число уникальных затронутых файлов по обоим снимкам;
-  - `diff_added_lines` / `diff_deleted_lines` — добавленные/удалённые строки из снимка после пересборки;
+- Читает `.vnix/config.json` и выполняет `rebuild_command` через `bash -c`, транслируя stdout/stderr в терминал в реальном времени.
+- Снимает ожидающий `git diff --numstat --no-ext-diff --ignore-submodules=dirty HEAD --` в начале пересборки:
+  - `diff_files_changed` — число изменённых файлов, отправленных на пересборку;
+  - `diff_added_lines` / `diff_deleted_lines` — ожидающие добавленные/удалённые строки, отправленные на пересборку;
   - `diff_total_lines` — added + deleted.
   Бинарные файлы (numstat `-`) считаются как 0 строк.
 - Фиксирует `started_at`, `finished_at` (RFC 3339) и `duration_ms`.
@@ -257,10 +270,15 @@ VNix — консольная утилита для NixOS, которая хра
 ```json
 {
   "managed_packages_file": "modules/vnix_packages.nix",
-  "rebuild_command": "sudo nixos-rebuild switch --flake .",
-  "nixpkgs_branch": "nixos-unstable"
+  "rebuild_command": "nixos-rebuild switch --flake . --quiet",
+  "nixpkgs_branch": "nixos-unstable",
+  "git_add": false,
+  "git_commit": false,
+  "git_push": false
 }
 ```
+
+Действия Git отключены по умолчанию. При явном включении VNix добавляет только `managed_packages_file` и никогда не запускает `git add .`.
 
 #### Схема SQLite (`.vnix/stats.db`)
 
@@ -300,7 +318,7 @@ VNix — консольна утиліта для NixOS, яка зберігає
 - Створює каталог `.vnix/` (завершується помилкою, якщо `.vnix` існує як звичайний файл, а не каталог).
 - Створює `.vnix/config.json` з трьома полями:
   - `managed_packages_file` — шлях до керованого Nix-файлу (за замовчуванням `modules/vnix_packages.nix`);
-  - `rebuild_command` — команда оболонки, яку виконує `vnix rebuild` (за замовчуванням `sudo nixos-rebuild switch --flake .`);
+  - `rebuild_command` — команда оболонки, яку виконує `vnix rebuild` (за замовчуванням `nixos-rebuild switch --flake . --quiet`);
   - `nixpkgs_branch` — ref nixpkgs, що його використовує `vnix search`.
 - **Автовизначення гілки nixpkgs** по порядку сканує: `flake.nix`, `flake.lock`, `configuration.nix`, `/etc/nixos/flake.nix`, `/etc/nixos/flake.lock`, `/etc/nixos/configuration.nix`. Зіставляються два шаблони: `github:NixOS/nixpkgs/<ref>` і JSON-форма flake-lock (`"owner": "NixOS"` + `"repo": "nixpkgs"` + `"ref": "..."`).
 - **Нормалізація гілки**: `unstable` → `nixos-unstable`; `YY.MM` (наприклад `26.05`) → `nixos-26.05`; інше використовується як є.
@@ -332,7 +350,7 @@ VNix — консольна утиліта для NixOS, яка зберігає
 
 #### `vnix install <pkg...>`
 
-Додає один або кілька пакунків до маркерного блоку `modules/vnix_packages.nix`.
+Додає один або кілька пакунків до маркерного блоку `managed_packages_file` (за замовчуванням `modules/vnix_packages.nix`).
 
 - **Валідація** (для кожного пакунка): непорожній після обрізки пробілів; відповідає `^[A-Za-z0-9._+-]+$`; без дублікатів в одному виклику. Будь-яке порушення перериває всю команду з точною помилкою.
 - Потрібно, щоб у керованому файлі були обидва маркери `# vnix:start` і `# vnix:end`, причому `start` має бути до `end`; інакше команда завершується помилкою.
@@ -345,10 +363,10 @@ VNix — консольна утиліта для NixOS, яка зберігає
 
 Запускає налаштовану команду перезбірки й записує до SQLite повний запис аудиту.
 
-- Читає `.vnix/config.json` і виконує `rebuild_command` через `sh -c`, транслюючи stdout/stderr у термінал наживо.
-- Знімає `git diff --numstat --no-ext-diff --ignore-submodules=dirty HEAD --` **до** і **після** перезбірки, потім обчислює різницю між двома знімками:
-  - `diff_files_changed` — кількість унікальних зачеплених файлів за обома знімками;
-  - `diff_added_lines` / `diff_deleted_lines` — додані/видалені рядки зі знімка після перезбірки;
+- Читає `.vnix/config.json` і виконує `rebuild_command` через `bash -c`, транслюючи stdout/stderr у термінал наживо.
+- Знімає очікуючий `git diff --numstat --no-ext-diff --ignore-submodules=dirty HEAD --` на початку перезбірки:
+  - `diff_files_changed` — кількість змінених файлів, надісланих на перезбірку;
+  - `diff_added_lines` / `diff_deleted_lines` — очікуючі додані/видалені рядки, надіслані на перезбірку;
   - `diff_total_lines` — added + deleted.
   Бінарні файли (numstat `-`) рахуються як 0 рядків.
 - Фіксує `started_at`, `finished_at` (RFC 3339) і `duration_ms`.
@@ -368,10 +386,15 @@ VNix — консольна утиліта для NixOS, яка зберігає
 ```json
 {
   "managed_packages_file": "modules/vnix_packages.nix",
-  "rebuild_command": "sudo nixos-rebuild switch --flake .",
-  "nixpkgs_branch": "nixos-unstable"
+  "rebuild_command": "nixos-rebuild switch --flake . --quiet",
+  "nixpkgs_branch": "nixos-unstable",
+  "git_add": false,
+  "git_commit": false,
+  "git_push": false
 }
 ```
+
+Дії Git вимкнено за замовчуванням. За явного увімкнення VNix додає лише `managed_packages_file` і ніколи не запускає `git add .`.
 
 #### Схема SQLite (`.vnix/stats.db`)
 

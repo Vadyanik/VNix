@@ -104,16 +104,22 @@ func runRebuildCommand(config Config) error {
 		fmt.Println("Backup created:", backup.Name)
 	}
 
-	command := "nixos-rebuild switch --flake . --quiet"
+	command := strings.TrimSpace(config.RebuildCommand)
+	if command == "" {
+		command = "nixos-rebuild switch --flake . --quiet"
+	}
 	fmt.Printf("Executing rebuild command:\n %s\n", command)
 	startedAt := time.Now()
-	beforeDiff, _ := gitDiffNumstat()
+	beforeDiff, err := gitDiffNumstat()
+	if err != nil {
+		return fmt.Errorf("read pending git changes: %w", err)
+	}
 	gitSteps := resolveGitSteps(config)
 
 	var rebuildOutput string
 	err = runHooks("before_rebuild", config.Hooks.BeforeRebuild)
 	if err == nil {
-		rebuildOutput, err = runRebuildSystem()
+		rebuildOutput, err = runRebuildSystem(command)
 	}
 	if err == nil {
 		err = runHooks("after_rebuild", config.Hooks.AfterRebuild)
@@ -124,7 +130,12 @@ func runRebuildCommand(config Config) error {
 		err = scanErr
 	}
 	if err == nil && gitSteps.Add {
-		err = runCommand("git", "add", ".")
+		managedFile, pathErr := managedPackagesFile()
+		if pathErr != nil {
+			err = pathErr
+		} else {
+			err = runCommand("git", "add", "--", managedFile)
+		}
 	}
 	if err == nil && gitSteps.Commit {
 		err = runHooks("before_commit", config.Hooks.BeforeCommit)
@@ -145,18 +156,16 @@ func runRebuildCommand(config Config) error {
 	}
 
 	finishedAt := time.Now()
-	afterDiff, _ := gitDiffNumstat()
-
 	entry := RebuildEntry{
 		StartedAt:        startedAt.Format(time.RFC3339),
 		FinishedAt:       finishedAt.Format(time.RFC3339),
 		DurationMs:       finishedAt.Sub(startedAt).Milliseconds(),
 		Success:          err == nil,
 		Command:          command,
-		DiffFilesChanged: diffFilesChanged(beforeDiff, afterDiff),
-		DiffAddedLines:   diffAddedLines(beforeDiff, afterDiff),
-		DiffDeletedLines: diffDeletedLines(beforeDiff, afterDiff),
-		DiffTotalLines:   diffTotalLines(beforeDiff, afterDiff),
+		DiffFilesChanged: len(beforeDiff),
+		DiffAddedLines:   diffLineSum(beforeDiff, 0),
+		DiffDeletedLines: diffLineSum(beforeDiff, 1),
+		DiffTotalLines:   diffLineSum(beforeDiff, 0) + diffLineSum(beforeDiff, 1),
 	}
 	if err != nil {
 		entry.ErrorMessage = err.Error()
@@ -184,7 +193,7 @@ func runRebuildCommand(config Config) error {
 }
 
 func enabled(value *bool) bool {
-	return value == nil || *value
+	return value != nil && *value
 }
 
 func resolveGitSteps(config Config) GitSteps {
@@ -310,9 +319,9 @@ func runCommand(name string, args ...string) error {
 	return cmd.Run()
 }
 
-func runRebuildSystem() (string, error) {
+func runRebuildSystem(command string) (string, error) {
 	var output bytes.Buffer
-	cmd := exec.Command("nixos-rebuild", "switch", "--flake", ".", "--quiet")
+	cmd := exec.Command("bash", "-c", command)
 	cmd.Stdout = io.MultiWriter(os.Stdout, &output)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &output)
 	err := cmd.Run()
@@ -548,33 +557,6 @@ func parseNumstatField(value string) (int, error) {
 		return 0, nil
 	}
 	return strconv.Atoi(value)
-}
-
-func diffFilesChanged(before, after map[string][2]int) int {
-	return len(diffKeys(before, after))
-}
-
-func diffAddedLines(before, after map[string][2]int) int {
-	return diffLineSum(after, 0)
-}
-
-func diffDeletedLines(before, after map[string][2]int) int {
-	return diffLineSum(after, 1)
-}
-
-func diffTotalLines(before, after map[string][2]int) int {
-	return diffAddedLines(before, after) + diffDeletedLines(before, after)
-}
-
-func diffKeys(before, after map[string][2]int) map[string]struct{} {
-	keys := make(map[string]struct{})
-	for key := range before {
-		keys[key] = struct{}{}
-	}
-	for key := range after {
-		keys[key] = struct{}{}
-	}
-	return keys
 }
 
 func diffLineSum(stats map[string][2]int, index int) int {

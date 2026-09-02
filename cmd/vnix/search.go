@@ -25,7 +25,10 @@ func SearchCommand(args []string) error {
 		return err
 	}
 	if branch == "" {
-		config, _ := readConfig()
+		config, configErr := readConfig()
+		if configErr != nil && !os.IsNotExist(configErr) {
+			return fmt.Errorf("read VNix configuration: %w", configErr)
+		}
 		branch = config.NixpkgsBranch
 	}
 	if branch == "" {

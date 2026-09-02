@@ -29,26 +29,30 @@ func InstallCommand(packageNames ...string) error {
 		seen[packageName] = struct{}{}
 	}
 
-	data, err := os.ReadFile("modules/vnix_packages.nix")
+	path, err := managedPackagesFile()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	if !strings.Contains(string(data), "# vnix:start") || !strings.Contains(string(data), "# vnix:end") {
-		return fmt.Errorf("no vnix markers found: add '# vnix:start' and '# vnix:end' to your modules/vnix_packages.nix file to use the install command")
+		return fmt.Errorf("no vnix markers found: add '# vnix:start' and '# vnix:end' to %s", path)
 	}
 
 	content := string(data)
 	startMarker := strings.Index(content, "# vnix:start")
 	endMarker := strings.Index(content, "# vnix:end")
 	if startMarker < 0 || endMarker < 0 || endMarker <= startMarker {
-		return fmt.Errorf("invalid vnix markers in modules/vnix_packages.nix")
+		return fmt.Errorf("invalid vnix markers in %s", path)
 	}
 
 	installBlock := content[startMarker+len("# vnix:start") : endMarker]
 	added := 0
 	for _, packageName := range packageNames {
 		if blockContainsPackage(installBlock, packageName) {
-			fmt.Printf("Package '%s' is already installed in modules/vnix_packages.nix\n", packageName)
+			fmt.Printf("Package '%s' is already installed in %s\n", packageName, path)
 			continue
 		}
 
@@ -65,7 +69,7 @@ func InstallCommand(packageNames ...string) error {
 		return err
 	}
 
-	err = os.WriteFile("modules/vnix_packages.nix", []byte(content), 0644)
+	err = os.WriteFile(path, []byte(content), 0o644)
 	if err != nil {
 		return err
 	}

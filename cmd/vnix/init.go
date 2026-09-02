@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -52,32 +53,37 @@ func initCommand(branch string) error {
 		fmt.Println("stats.db already exists, skipping...")
 	}
 
-	info, err = os.Stat("modules")
+	managedFile, err := managedPackagesFile()
+	if err != nil {
+		return err
+	}
+	managedDir := filepath.Dir(managedFile)
+	info, err = os.Stat(managedDir)
 	if err == nil && !info.IsDir() {
-		return fmt.Errorf("'modules' exists but is not a directory")
+		return fmt.Errorf("%q exists but is not a directory", managedDir)
 	}
 	if os.IsNotExist(err) {
-		if err := os.MkdirAll("modules", 0o755); err != nil {
+		if err := os.MkdirAll(managedDir, 0o755); err != nil {
 			return err
 		}
 	} else if err != nil {
 		return err
 	}
 
-	_, err = os.Stat("modules/vnix_packages.nix")
+	_, err = os.Stat(managedFile)
 	if os.IsNotExist(err) {
-		if err := CreateVNIXPackageFile(); err != nil {
+		if err := CreateVNIXPackageFileAt(managedFile); err != nil {
 			return err
 		}
 	} else {
-		data, err := os.ReadFile("modules/vnix_packages.nix")
+		data, err := os.ReadFile(managedFile)
 		if err != nil {
 			return err
 		}
 		if strings.Contains(string(data), "# vnix:start") && strings.Contains(string(data), "# vnix:end") {
-			fmt.Println("vnix_packages.nix already exists and contains the required markers, skipping...")
+			fmt.Printf("%s already exists and contains the required markers, skipping...\n", managedFile)
 		} else {
-			fmt.Println("vnix_packages.nix already exists but does not contain the required markers. Please ensure that the file contains the following lines:")
+			fmt.Printf("%s already exists but does not contain the required markers. Please ensure that the file contains the following lines:\n", managedFile)
 			fmt.Println("# vnix:start")
 			fmt.Println("# vnix:end")
 		}
@@ -99,10 +105,11 @@ func CreateConfigWithBranch(branch string) error {
 	branch = normalizeNixpkgsBranch(branch)
 	content := fmt.Sprintf(`{
   "managed_packages_file": "modules/vnix_packages.nix",
+	  "rebuild_command": "nixos-rebuild switch --flake . --quiet",
   "nixpkgs_branch": %q,
-  "git_add": true,
-  "git_commit": true,
-  "git_push": true,
+	  "git_add": false,
+	  "git_commit": false,
+	  "git_push": false,
   "commit_message_prefix": "rebuild",
   "security_scan_command": "",
   "hooks": {
@@ -113,7 +120,7 @@ func CreateConfigWithBranch(branch string) error {
     "after_push": []
   }
 }`, branch)
-	return os.WriteFile(".vnix/config.json", []byte(content), 0644)
+	return os.WriteFile(".vnix/config.json", []byte(content), 0o600)
 }
 
 func detectNixpkgsBranch() (string, error) {
@@ -193,8 +200,12 @@ CREATE INDEX IF NOT EXISTS idx_rebuilds_success ON rebuilds(success);
 }
 
 func CreateVNIXPackageFile() error {
-	fmt.Println("Creating vnix_packages.nix...")
-	err := os.MkdirAll("modules", os.ModePerm)
+	return CreateVNIXPackageFileAt(managedPackagesPath)
+}
+
+func CreateVNIXPackageFileAt(path string) error {
+	fmt.Printf("Creating %s...\n", path)
+	err := os.MkdirAll(filepath.Dir(path), 0o755)
 	if err != nil {
 		return err
 	}
@@ -209,23 +220,23 @@ func CreateVNIXPackageFile() error {
 }
 `
 
-	err = os.WriteFile("modules/vnix_packages.nix", []byte(content), 0644)
+	err = os.WriteFile(path, []byte(content), 0o644)
 	if err != nil {
 		return err
 	}
-	InstructUser()
+	InstructUser(path)
 
 	return nil
 }
 
-func InstructUser() {
-	fmt.Println(`modules/vnix_packages.nix installed successfully. For it to work you need to add: 
+func InstructUser(path string) {
+	fmt.Printf(`%s installed successfully. For it to work you need to add:
 
 imports = [
 
-  ./modules/vnix_packages.nix
+  ./%s
 
 ];
 
-to your nixos config.`)
+to your nixos config.`, path, path)
 }

@@ -51,6 +51,47 @@ func TestCreateAndRestoreBackup(t *testing.T) {
 	}
 }
 
+func TestRestoreCorruptBackupDoesNotChangeFiles(t *testing.T) {
+	setupFeatureProject(t)
+	original, err := os.ReadFile(managedPackagesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(".vnix/backups", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(".vnix/backups/corrupt.tar.gz", []byte("not a gzip archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreBackup("corrupt.tar.gz"); err == nil {
+		t.Fatal("expected corrupt backup error")
+	}
+	after, err := os.ReadFile(managedPackagesPath)
+	if err != nil || string(after) != string(original) {
+		t.Fatalf("corrupt backup changed managed packages: %q, %v", after, err)
+	}
+}
+
+func TestCustomManagedPackagesFile(t *testing.T) {
+	setupFeatureProject(t)
+	if err := os.MkdirAll("custom", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(managedPackagesPath, "custom/packages.nix"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(".vnix/config.json", []byte(`{"managed_packages_file":"custom/packages.nix"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallCommand("neovim"); err != nil {
+		t.Fatal(err)
+	}
+	packages, err := readManagedPackages()
+	if err != nil || strings.Join(packages, ",") != "git,neovim" {
+		t.Fatalf("custom managed file was not used: %v, %v", packages, err)
+	}
+}
+
 func TestParseGenerationsAndPatch(t *testing.T) {
 	generations, err := parseGenerations(`[{"generation":42,"date":"2026-08-30","nixosVersion":"26.11","current":true}]`)
 	if err != nil || len(generations) != 1 || generations[0].Number != 42 || !generations[0].Current {

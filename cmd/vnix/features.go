@@ -19,6 +19,24 @@ import (
 
 const managedPackagesPath = "modules/vnix_packages.nix"
 
+func managedPackagesFile() (string, error) {
+	config, err := readConfig()
+	if os.IsNotExist(err) {
+		return managedPackagesPath, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	path := strings.TrimSpace(config.ManagedPackagesFile)
+	if path == "" {
+		return managedPackagesPath, nil
+	}
+	if filepath.IsAbs(path) || path == "." || strings.HasPrefix(filepath.Clean(path), ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("managed_packages_file must be a path inside the project")
+	}
+	return path, nil
+}
+
 type CommandResult struct {
 	Command string
 	Output  string
@@ -113,11 +131,15 @@ func saveSecurityScanCommand(command string) error {
 }
 
 func readManagedPackages() ([]string, error) {
-	data, err := os.ReadFile(managedPackagesPath)
+	path, err := managedPackagesFile()
 	if err != nil {
 		return nil, err
 	}
-	_, block, _, err := managedPackageSections(string(data))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	_, block, _, err := managedPackageSections(string(data), path)
 	if err != nil {
 		return nil, err
 	}
@@ -137,11 +159,15 @@ func writeManagedPackages(packages []string) error {
 			return fmt.Errorf("invalid package name %q", pkg)
 		}
 	}
-	data, err := os.ReadFile(managedPackagesPath)
+	path, err := managedPackagesFile()
 	if err != nil {
 		return err
 	}
-	prefix, _, suffix, err := managedPackageSections(string(data))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	prefix, _, suffix, err := managedPackageSections(string(data), path)
 	if err != nil {
 		return err
 	}
@@ -154,14 +180,14 @@ func writeManagedPackages(packages []string) error {
 		lines = append(lines, indent+pkg)
 	}
 	content := prefix + "\n" + strings.Join(lines, "\n") + "\n" + suffix
-	return os.WriteFile(managedPackagesPath, []byte(content), 0o644)
+	return os.WriteFile(path, []byte(content), 0o644)
 }
 
-func managedPackageSections(content string) (string, string, string, error) {
+func managedPackageSections(content, path string) (string, string, string, error) {
 	start := strings.Index(content, "# vnix:start")
 	end := strings.Index(content, "# vnix:end")
 	if start < 0 || end < 0 || end <= start {
-		return "", "", "", fmt.Errorf("invalid vnix markers in %s", managedPackagesPath)
+		return "", "", "", fmt.Errorf("invalid vnix markers in %s", path)
 	}
 	start += len("# vnix:start")
 	lineStart := strings.LastIndex(content[:end], "\n") + 1
@@ -169,6 +195,10 @@ func managedPackageSections(content string) (string, string, string, error) {
 }
 
 func createBackup() (Backup, error) {
+	managedFile, err := managedPackagesFile()
+	if err != nil {
+		return Backup{}, err
+	}
 	if err := os.MkdirAll(".vnix/backups", 0o700); err != nil {
 		return Backup{}, err
 	}
@@ -182,7 +212,7 @@ func createBackup() (Backup, error) {
 	defer file.Close()
 	gzipWriter := gzip.NewWriter(file)
 	tarWriter := tar.NewWriter(gzipWriter)
-	for _, source := range []string{managedPackagesPath, ".vnix/config.json"} {
+	for _, source := range []string{managedFile, ".vnix/config.json"} {
 		data, readErr := os.ReadFile(source)
 		if os.IsNotExist(readErr) {
 			continue
@@ -244,7 +274,12 @@ func restoreBackup(name string) error {
 	}
 	defer gzipReader.Close()
 	tarReader := tar.NewReader(gzipReader)
-	allowed := map[string]bool{managedPackagesPath: true, ".vnix/config.json": true}
+	managedFile, err := managedPackagesFile()
+	if err != nil {
+		return err
+	}
+	allowed := map[string]bool{managedFile: true, ".vnix/config.json": true}
+	entries := make(map[string][]byte)
 	for {
 		header, nextErr := tarReader.Next()
 		if nextErr == io.EOF {
@@ -256,18 +291,51 @@ func restoreBackup(name string) error {
 		if !allowed[header.Name] || header.Typeflag != tar.TypeReg {
 			return fmt.Errorf("invalid backup entry %q", header.Name)
 		}
+		if _, exists := entries[header.Name]; exists {
+			return fmt.Errorf("duplicate backup entry %q", header.Name)
+		}
 		data, readErr := io.ReadAll(io.LimitReader(tarReader, header.Size+1))
 		if readErr != nil || int64(len(data)) != header.Size {
 			return fmt.Errorf("cannot read backup entry %q", header.Name)
 		}
-		if err := os.MkdirAll(filepath.Dir(header.Name), 0o700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(header.Name, data, 0o600); err != nil {
-			return err
+		entries[header.Name] = data
+	}
+	if len(entries) == 0 {
+		return fmt.Errorf("backup contains no restorable files")
+	}
+	if _, err := createBackup(); err != nil {
+		return fmt.Errorf("create safety backup: %w", err)
+	}
+	for path, data := range entries {
+		if err := writeFileAtomically(path, data, 0o600); err != nil {
+			return fmt.Errorf("restore backup: %w", err)
 		}
 	}
 	return nil
+}
+
+func writeFileAtomically(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), ".vnix-restore-*")
+	if err != nil {
+		return err
+	}
+	temporary := file.Name()
+	defer os.Remove(temporary)
+	if err := file.Chmod(mode); err != nil {
+		file.Close()
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporary, path)
 }
 
 func loadProfiles() (Profiles, error) {

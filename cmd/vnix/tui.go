@@ -13,6 +13,22 @@ import (
 
 const tuiDashboard = "dashboard"
 
+var (
+	catCrust   = tcell.NewHexColor(0x11111b)
+	catMantle  = tcell.NewHexColor(0x181825)
+	catBase    = tcell.NewHexColor(0x1e1e2e)
+	catSurface = tcell.NewHexColor(0x313244)
+	catOverlay = tcell.NewHexColor(0x6c7086)
+	catText    = tcell.NewHexColor(0xcdd6f4)
+	catSubtext = tcell.NewHexColor(0xa6adc8)
+	catMauve   = tcell.NewHexColor(0xcba6f7)
+	catBlue    = tcell.NewHexColor(0x89b4fa)
+	catTeal    = tcell.NewHexColor(0x94e2d5)
+	catGreen   = tcell.NewHexColor(0xa6e3a1)
+	catYellow  = tcell.NewHexColor(0xf9e2af)
+	catRed     = tcell.NewHexColor(0xf38ba8)
+)
+
 var petPhrases = map[string][]string{
 	"welcome":  {"Ready for a cozy session!", "Let's make Nix happy!", "I'm here to help!"},
 	"init":     {"Fresh den, fresh start!", "Let's build a cozy system!", "Ready to nest!"},
@@ -29,6 +45,7 @@ var tuiPetSpeech = petPhrases["welcome"][0]
 var petReactions = []string{"<3", "^_^", "*purr*", "yay!", "=^.^="}
 
 func TUICommand() error {
+	applyCatppuccinTheme()
 	app := tview.NewApplication()
 	pages := tview.NewPages()
 	petSay("welcome")
@@ -37,33 +54,124 @@ func TUICommand() error {
 }
 
 func showDashboard(app *tview.Application, pages *tview.Pages, message string) {
+	actions := dashboardActions(app, pages)
+	canvas := tview.NewTextView().SetDynamicColors(true).SetWrap(true)
+	canvas.SetBackgroundColor(catBase)
 	menu := tview.NewList().ShowSecondaryText(false)
-	menu.AddItem("Initialize project", "", 'i', func() { petSay("init"); showInit(app, pages) })
-	menu.AddItem("Search and install packages", "", 's', func() { petSay("search"); showSearch(app, pages) })
-	menu.AddItem("Add package names", "", 'a', func() { petSay("install"); showAddPackages(app, pages) })
-	menu.AddItem("Review rebuild plan", "", 'p', func() { petSay("rebuild"); showPlan(app, pages) })
-	menu.AddItem("Rebuild system", "", 'r', func() { petSay("rebuild"); showRebuildConfirm(app, pages) })
-	menu.AddItem("Edit managed packages", "", 'e', func() { petSay("install"); showPackageEditor(app, pages) })
-	menu.AddItem("Manage package profiles", "", 'f', func() { petSay("install"); showProfiles(app, pages) })
-	menu.AddItem("Manage system generations", "", 'g', func() { petSay("rebuild"); showGenerations(app, pages) })
-	menu.AddItem("Check configuration drift", "", 'd', func() { petSay("stats"); showDrift(app, pages) })
-	menu.AddItem("Run security scan", "", 'c', func() { petSay("stats"); showSecurityScan(app, pages) })
-	menu.AddItem("Restore a backup", "", 'b', func() { petSay("install"); showBackups(app, pages) })
-	menu.AddItem("View rebuild timeline", "", 't', func() { petSay("stats"); showStats(app, pages) })
-	menu.AddItem("Set Gemini API key", "", 'k', func() { petSay("key"); showGeminiKey(app, pages) })
-	menu.AddItem("Quit", "", 'q', app.Stop)
-	menu.SetBorder(true).SetTitle(" Actions ").SetBorderColor(tcell.ColorMediumPurple)
-
-	status := tview.NewTextView().SetDynamicColors(true).SetText("[lightsteelblue]" + message)
-	status.SetBorder(true).SetTitle(" Status ").SetBorderColor(tcell.ColorDarkCyan)
-	header := tview.NewTextView().SetDynamicColors(true).SetText("[mediumorchid::b]VNix[-::-]  [gray]NixOS package and rebuild manager[-]\n[darkcyan]i init  s search  a add  p plan  r rebuild  e edit  f profiles  g generations\n[darkcyan]d drift  c scan  b backups  t timeline  k key  q quit")
-	header.SetBorder(true).SetTitle(" VNix TUI ").SetBorderColor(tcell.ColorMediumPurple)
+	menu.SetBackgroundColor(catMantle)
+	menu.SetMainTextColor(catSubtext).SetSelectedTextColor(catMauve)
+	menu.SetSelectedBackgroundColor(catSurface).SetHighlightFullLine(true).SetSelectedFocusOnly(false)
+	for index, action := range actions {
+		menu.AddItem(strings.ToUpper(action.name), "", 0, action.run)
+		if index == 0 {
+			canvas.SetText(dashboardCanvas(action, message))
+		}
+	}
+	menu.SetChangedFunc(func(index int, _ string, _ string, _ rune) {
+		canvas.SetText(dashboardCanvas(actions[index], message))
+	})
+	menu.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyRune {
+			for _, action := range actions {
+				if event.Rune() == action.key {
+					action.run()
+					return nil
+				}
+			}
+		}
+		return event
+	})
+	status := tview.NewTextView().SetDynamicColors(true).SetText("[#6c7086]" + catppuccinMessage(message) + "[-]")
+	status.SetBackgroundColor(catCrust)
+	header := tview.NewTextView().SetDynamicColors(true).SetText("[#cba6f7::b]VNix[-]  [#6c7086]/ NixOS configuration cockpit[-]\n[#94e2d5]review[-]  [#6c7086]-->[-]  [#89b4fa]validate[-]  [#6c7086]-->[-]  [#a6e3a1]apply[-]")
+	header.SetBackgroundColor(catCrust)
+	navTitle := tview.NewTextView().SetDynamicColors(true).SetText("[#6c7086]COMMANDS[-]")
+	navTitle.SetBackgroundColor(catMantle)
+	nav := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(navTitle, 2, 0, false).AddItem(menu, 0, 1, true)
+	right := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(canvas, 0, 1, false).AddItem(newPetView(), 9, 0, false)
+	body := tview.NewFlex().
+		AddItem(nav, 24, 0, true).
+		AddItem(tview.NewBox().SetBackgroundColor(catCrust), 2, 0, false).
+		AddItem(right, 0, 1, false)
 
 	root := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(header, 6, 0, false).
-		AddItem(withPet(menu), 0, 1, true).
-		AddItem(status, 4, 0, false)
+		AddItem(header, 4, 0, false).
+		AddItem(body, 0, 1, true).
+		AddItem(status, 2, 0, false)
 	pages.AddAndSwitchToPage(tuiDashboard, root, true)
+}
+
+type dashboardAction struct {
+	name        string
+	description string
+	key         rune
+	run         func()
+}
+
+func dashboardActions(app *tview.Application, pages *tview.Pages) []dashboardAction {
+	return []dashboardAction{
+		{"Initialize", "Create the local VNix workspace and managed Nix module.", 'i', func() { petSay("init"); showInit(app, pages) }},
+		{"Search", "Find and select packages from nixpkgs without leaving VNix.", 's', func() { petSay("search"); showSearch(app, pages) }},
+		{"Add", "Add known package attributes to the managed package set.", 'a', func() { petSay("install"); showAddPackages(app, pages) }},
+		{"Plan", "Preview source changes and validate the system before rebuilding.", 'p', func() { petSay("rebuild"); showPlan(app, pages) }},
+		{"Rebuild", "Review the diff, then switch the running system.", 'r', func() { petSay("rebuild"); showRebuildConfirm(app, pages) }},
+		{"Editor", "Edit the complete managed package set with automatic backup.", 'e', func() { petSay("install"); showPackageEditor(app, pages) }},
+		{"Profiles", "Save and restore named package sets.", 'f', func() { petSay("install"); showProfiles(app, pages) }},
+		{"Generations", "Inspect and switch to an earlier NixOS generation.", 'g', func() { petSay("rebuild"); showGenerations(app, pages) }},
+		{"Drift", "Compare Git sources, active system, and profile state.", 'd', func() { petSay("stats"); showDrift(app, pages) }},
+		{"Security", "Configure and run a trusted security scanner.", 'c', func() { petSay("stats"); showSecurityScan(app, pages) }},
+		{"Backups", "Restore a previous managed configuration snapshot.", 'b', func() { petSay("install"); showBackups(app, pages) }},
+		{"Timeline", "Inspect rebuild outcomes and their recorded details.", 't', func() { petSay("stats"); showStats(app, pages) }},
+		{"AI key", "Store the Gemini API key with owner-only permissions.", 'k', func() { petSay("key"); showGeminiKey(app, pages) }},
+		{"Quit", "Close the VNix interface.", 'q', app.Stop},
+	}
+}
+
+func dashboardCanvas(action dashboardAction, message string) string {
+	return "[#cba6f7::b]" + strings.ToUpper(action.name) + "[-]\n\n[#cdd6f4]" + action.description + "[-]\n\n[#6c7086]Shortcut[-]  [#89b4fa]" + strings.ToUpper(string(action.key)) + "[-]\n\n[#6c7086]Workspace[-]\n" + dashboardSnapshot() + "\n\n[#a6adc8]" + catppuccinMessage(message) + "[-]"
+}
+
+func applyCatppuccinTheme() {
+	tview.Styles.PrimitiveBackgroundColor = catBase
+	tview.Styles.ContrastBackgroundColor = catSurface
+	tview.Styles.MoreContrastBackgroundColor = catMauve
+	tview.Styles.BorderColor = catOverlay
+	tview.Styles.TitleColor = catMauve
+	tview.Styles.GraphicsColor = catOverlay
+	tview.Styles.PrimaryTextColor = catText
+	tview.Styles.SecondaryTextColor = catSubtext
+	tview.Styles.TertiaryTextColor = catGreen
+	tview.Styles.InverseTextColor = catBase
+	tview.Styles.ContrastSecondaryTextColor = catMantle
+}
+
+func dashboardSnapshot() string {
+	packages, packageErr := readManagedPackages()
+	dirty, gitErr := gitHasChanges()
+	records, recordsErr := loadTimeline()
+	packageStatus := fmt.Sprintf("%d managed", len(packages))
+	if packageErr != nil {
+		packageStatus = "not initialized"
+	}
+	gitStatus := "clean"
+	if gitErr != nil {
+		gitStatus = "unavailable"
+	} else if dirty {
+		gitStatus = "changes pending"
+	}
+	timelineStatus := fmt.Sprintf("%d runs", len(records))
+	if recordsErr != nil {
+		timelineStatus = "no history yet"
+	}
+	return "[#a6adc8]Git[-]        " + gitStatus + "\n[#a6adc8]Packages[-]   " + packageStatus + "\n[#a6adc8]Timeline[-]   " + timelineStatus + "\n\n[#6c7086]Open the rebuild plan before switching the system.[-]"
+}
+
+func catppuccinMessage(message string) string {
+	return strings.NewReplacer(
+		"[red]", "[#f38ba8]",
+		"[green]", "[#a6e3a1]",
+		"[yellow]", "[#f9e2af]",
+	).Replace(message)
 }
 
 func showInit(app *tview.Application, pages *tview.Pages) {
@@ -143,7 +251,7 @@ func showSearchResults(app *tview.Application, pages *tview.Pages, results []sea
 	table := tview.NewTable().SetBorders(false).SetSelectable(true, false)
 	headers := []string{"", "Attribute", "Package", "Version", "Description"}
 	for column, header := range headers {
-		table.SetCell(0, column, tview.NewTableCell(header).SetTextColor(tcell.ColorMediumPurple).SetSelectable(false))
+		table.SetCell(0, column, tview.NewTableCell(header).SetTextColor(catMauve).SetSelectable(false))
 	}
 	selected := make(map[int]bool)
 	for row, result := range results {
@@ -153,7 +261,7 @@ func showSearchResults(app *tview.Application, pages *tview.Pages, results []sea
 		table.SetCell(row+1, 3, tview.NewTableCell(result.Version))
 		table.SetCell(row+1, 4, tview.NewTableCell(strings.ReplaceAll(result.Description, "\n", " ")))
 	}
-	table.SetBorder(true).SetTitle(" Search results ").SetBorderColor(tcell.ColorMediumPurple)
+	table.SetBorder(true).SetTitle(" SEARCH RESULTS ").SetBorderColor(catMauve).SetBackgroundColor(catSurface)
 	table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		row, _ := table.GetSelection()
 		switch event.Key() {
@@ -162,7 +270,7 @@ func showSearchResults(app *tview.Application, pages *tview.Pages, results []sea
 				selected[row-1] = !selected[row-1]
 				marker := "[ ]"
 				if selected[row-1] {
-					marker = "[green][x][-]"
+					marker = "[#a6e3a1][x][-]"
 				}
 				table.GetCell(row, 0).SetText(marker)
 				return nil
@@ -192,7 +300,7 @@ func showSearchResults(app *tview.Application, pages *tview.Pages, results []sea
 		return event
 	})
 
-	help := tview.NewTextView().SetDynamicColors(true).SetText("[gray]Space select  Enter install selected  q back")
+	help := tview.NewTextView().SetDynamicColors(true).SetText("[#6c7086]SPACE select   ENTER install selected   Q back[-]")
 	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(table, 0, 1, true).AddItem(help, 1, 0, false)
 	pages.AddAndSwitchToPage("search-results", withPet(root), true)
 }
@@ -215,26 +323,26 @@ func showPlan(app *tview.Application, pages *tview.Pages) {
 func showPlanResult(app *tview.Application, pages *tview.Pages, plan Plan) {
 	content := colorizeChangePreviewForTUI(plan.Changes) + "\n\n" + formatPreflight(plan.Checks)
 	view := tview.NewTextView().SetDynamicColors(true).SetScrollable(true).SetWrap(false).SetText(content)
-	view.SetBorder(true).SetTitle(" Rebuild plan and preflight ").SetBorderColor(tcell.ColorMediumPurple)
+	view.SetBorder(true).SetTitle(" REBUILD PLAN / PREFLIGHT ").SetBorderColor(catMauve).SetBackgroundColor(catSurface)
 	buttons := tview.NewForm()
 	buttons.AddButton("Switch system", func() { showRebuildConfirm(app, pages) })
 	buttons.AddButton("Back", func() { showDashboard(app, pages, "Plan review closed.") })
-	buttons.SetBorder(true).SetTitle(" No system changes were made by preflight ").SetBorderColor(tcell.ColorDarkCyan)
+	buttons.SetBorder(true).SetTitle(" PREFLIGHT NEVER CHANGES THE SYSTEM ").SetBorderColor(catTeal).SetBackgroundColor(catMantle)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(view, 0, 1, true).AddItem(buttons, 5, 0, false)
 	pages.AddAndSwitchToPage("plan", withPet(root), true)
 }
 
 func formatPreflight(checks []PreflightCheck) string {
 	var lines []string
-	lines = append(lines, "[darkcyan]Preflight checks[-]")
+	lines = append(lines, "[#94e2d5::b]PREFLIGHT CHECKS[-]")
 	for _, check := range checks {
-		status := "[green]PASS[-]"
+		status := "[#a6e3a1]PASS[-]"
 		if check.Err != nil {
-			status = "[indianred]FAIL[-]"
+			status = "[#f38ba8]FAIL[-]"
 		}
-		lines = append(lines, status+" "+check.Name+" [gray]"+check.Result.Command+"[-]")
+		lines = append(lines, status+" "+check.Name+" [#6c7086]"+check.Result.Command+"[-]")
 		if check.Err != nil && check.Result.Output != "" {
-			lines = append(lines, "[gray]"+tview.Escape(truncateDiagnostic(check.Result.Output, 1000))+"[-]")
+			lines = append(lines, "[#a6adc8]"+tview.Escape(truncateDiagnostic(check.Result.Output, 1000))+"[-]")
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -318,7 +426,7 @@ func showGenerations(app *tview.Application, pages *tview.Pages) {
 	}
 	table := tview.NewTable().SetSelectable(true, false)
 	for column, header := range []string{"Generation", "Current", "Date", "NixOS"} {
-		table.SetCell(0, column, tview.NewTableCell(header).SetTextColor(tcell.ColorMediumPurple).SetSelectable(false))
+		table.SetCell(0, column, tview.NewTableCell(header).SetTextColor(catMauve).SetSelectable(false))
 	}
 	for row, generation := range generations {
 		current := ""
@@ -336,7 +444,7 @@ func showGenerations(app *tview.Application, pages *tview.Pages) {
 		}
 	})
 	table.SetDoneFunc(func(key tcell.Key) { showDashboard(app, pages, "Generations closed.") })
-	table.SetBorder(true).SetTitle(" System generations: Enter to switch ").SetBorderColor(tcell.ColorMediumPurple)
+	table.SetBorder(true).SetTitle(" SYSTEM GENERATIONS / ENTER TO SWITCH ").SetBorderColor(catMauve).SetBackgroundColor(catSurface)
 	pages.AddAndSwitchToPage("generations", withPet(table), true)
 }
 
@@ -412,8 +520,8 @@ func showBackups(app *tview.Application, pages *tview.Pages) {
 		return
 	}
 	table := tview.NewTable().SetSelectable(true, false)
-	table.SetCell(0, 0, tview.NewTableCell("Backup").SetTextColor(tcell.ColorMediumPurple).SetSelectable(false))
-	table.SetCell(0, 1, tview.NewTableCell("Created").SetTextColor(tcell.ColorMediumPurple).SetSelectable(false))
+	table.SetCell(0, 0, tview.NewTableCell("Backup").SetTextColor(catMauve).SetSelectable(false))
+	table.SetCell(0, 1, tview.NewTableCell("Created").SetTextColor(catMauve).SetSelectable(false))
 	for row, backup := range backups {
 		table.SetCell(row+1, 0, tview.NewTableCell(backup.Name))
 		table.SetCell(row+1, 1, tview.NewTableCell(backup.CreatedAt.Local().Format("2006-01-02 15:04")))
@@ -424,7 +532,7 @@ func showBackups(app *tview.Application, pages *tview.Pages) {
 		}
 	})
 	table.SetDoneFunc(func(key tcell.Key) { showDashboard(app, pages, "Backups closed.") })
-	table.SetBorder(true).SetTitle(" Backups: Enter to restore ").SetBorderColor(tcell.ColorMediumPurple)
+	table.SetBorder(true).SetTitle(" BACKUPS / ENTER TO RESTORE ").SetBorderColor(catMauve).SetBackgroundColor(catSurface)
 	pages.AddAndSwitchToPage("backups", withPet(table), true)
 }
 
@@ -448,7 +556,7 @@ func showRestoreConfirm(app *tview.Application, pages *tview.Pages, backup Backu
 
 func showOutput(app *tview.Application, pages *tview.Pages, title, content string) {
 	view := tview.NewTextView().SetScrollable(true).SetWrap(true).SetText(content)
-	view.SetBorder(true).SetTitle(title).SetBorderColor(tcell.ColorMediumPurple)
+	view.SetBorder(true).SetTitle(strings.ToUpper(title)).SetBorderColor(catMauve).SetBackgroundColor(catSurface)
 	view.SetDoneFunc(func(key tcell.Key) { showDashboard(app, pages, "View closed.") })
 	pages.AddAndSwitchToPage(strings.ToLower(strings.Trim(title, " ")), withPet(view), true)
 }
@@ -461,7 +569,7 @@ func showRebuildConfirm(app *tview.Application, pages *tview.Pages) {
 		return
 	}
 	diff := tview.NewTextView().SetDynamicColors(true).SetScrollable(true).SetWrap(false).SetText(colorizeChangePreviewForTUI(preview))
-	diff.SetBorder(true).SetTitle(" Changes to be applied ").SetBorderColor(tcell.ColorMediumPurple)
+	diff.SetBorder(true).SetTitle(" CHANGES TO BE APPLIED ").SetBorderColor(catMauve).SetBackgroundColor(catSurface)
 	buttons := tview.NewForm()
 	buttons.AddButton("Rebuild", func() {
 		config, err := readConfig()
@@ -481,7 +589,7 @@ func showRebuildConfirm(app *tview.Application, pages *tview.Pages) {
 		}
 	})
 	buttons.AddButton("Back", func() { showDashboard(app, pages, "Rebuild cancelled.") })
-	buttons.SetBorder(true).SetTitle(" Review the diff, then choose an action ").SetBorderColor(tcell.ColorDarkCyan)
+	buttons.SetBorder(true).SetTitle(" REVIEW THE DIFF, THEN CHOOSE AN ACTION ").SetBorderColor(catTeal).SetBackgroundColor(catMantle)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(diff, 0, 1, true).AddItem(buttons, 5, 0, false)
 	pages.AddAndSwitchToPage("rebuild-confirm", withPet(root), true)
 }
@@ -489,7 +597,7 @@ func showRebuildConfirm(app *tview.Application, pages *tview.Pages) {
 func showRebuildDiagnosis(app *tview.Application, pages *tview.Pages, rebuildErr, diagnosis string) {
 	content := "Rebuild failed:\n" + rebuildErr + "\n\nOpenCode diagnosis:\n" + diagnosis
 	view := tview.NewTextView().SetScrollable(true).SetWrap(true).SetText(content)
-	view.SetBorder(true).SetTitle(" Rebuild diagnosis ").SetBorderColor(tcell.ColorIndianRed)
+	view.SetBorder(true).SetTitle(" REBUILD DIAGNOSIS ").SetBorderColor(catRed).SetBackgroundColor(catSurface)
 	buttons := tview.NewForm()
 	buttons.AddButton("Propose patch", func() {
 		showDashboard(app, pages, "[yellow]Asking OpenCode for a patch...")
@@ -506,14 +614,14 @@ func showRebuildDiagnosis(app *tview.Application, pages *tview.Pages, rebuildErr
 		}()
 	})
 	buttons.AddButton("Back", func() { showDashboard(app, pages, "[red]Rebuild failed. Review the diagnosis before retrying.") })
-	buttons.SetBorder(true).SetTitle(" OpenCode never applies changes automatically ").SetBorderColor(tcell.ColorDarkCyan)
+	buttons.SetBorder(true).SetTitle(" OPENCODE NEVER APPLIES CHANGES AUTOMATICALLY ").SetBorderColor(catTeal).SetBackgroundColor(catMantle)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(view, 0, 1, true).AddItem(buttons, 5, 0, false)
 	pages.AddAndSwitchToPage("rebuild-diagnosis", withPet(root), true)
 }
 
 func showPatchPreview(app *tview.Application, pages *tview.Pages, patch string) {
 	view := tview.NewTextView().SetDynamicColors(true).SetScrollable(true).SetWrap(false).SetText(colorizeChangePreviewForTUI(patch))
-	view.SetBorder(true).SetTitle(" Proposed patch ").SetBorderColor(tcell.ColorMediumPurple)
+	view.SetBorder(true).SetTitle(" PROPOSED PATCH ").SetBorderColor(catMauve).SetBackgroundColor(catSurface)
 	buttons := tview.NewForm()
 	buttons.AddButton("Apply patch", func() {
 		if err := applyPatch(patch); err != nil {
@@ -525,7 +633,7 @@ func showPatchPreview(app *tview.Application, pages *tview.Pages, patch string) 
 		showDashboard(app, pages, "[green]Patch applied. Review the rebuild plan before switching.")
 	})
 	buttons.AddButton("Discard", func() { showDashboard(app, pages, "Patch discarded.") })
-	buttons.SetBorder(true).SetTitle(" Applying changes requires this explicit confirmation ").SetBorderColor(tcell.ColorDarkCyan)
+	buttons.SetBorder(true).SetTitle(" APPLYING REQUIRES EXPLICIT CONFIRMATION ").SetBorderColor(catTeal).SetBackgroundColor(catMantle)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(view, 0, 1, true).AddItem(buttons, 5, 0, false)
 	pages.AddAndSwitchToPage("patch-preview", withPet(root), true)
 }
@@ -547,14 +655,14 @@ func showStats(app *tview.Application, pages *tview.Pages) {
 	table := tview.NewTable().SetBorders(false).SetSelectable(true, false)
 	columns := []string{"Result", "Started", "Duration", "Files", "Added", "Deleted", "Exit code"}
 	for column, header := range columns {
-		table.SetCell(0, column, tview.NewTableCell(header).SetTextColor(tcell.ColorMediumPurple))
+		table.SetCell(0, column, tview.NewTableCell(header).SetTextColor(catMauve))
 	}
 	for index := len(records) - 1; index >= 0; index-- {
 		record := records[index]
 		row := len(records) - index
-		result, color := "Failed", tcell.ColorIndianRed
+		result, color := "Failed", catRed
 		if record.Success {
-			result, color = "Success", tcell.ColorMediumSeaGreen
+			result, color = "Success", catGreen
 		}
 		exitCode := "-"
 		if record.ExitCode.Valid {
@@ -579,7 +687,7 @@ func showStats(app *tview.Application, pages *tview.Pages) {
 		}
 		showOutput(app, pages, " Rebuild timeline detail ", content)
 	})
-	table.SetBorder(true).SetTitle(fmt.Sprintf(" Rebuild timeline: %d records (Enter for details) ", len(records))).SetBorderColor(tcell.ColorMediumPurple)
+	table.SetBorder(true).SetTitle(fmt.Sprintf(" REBUILD TIMELINE / %d RECORDS / ENTER FOR DETAILS ", len(records))).SetBorderColor(catMauve).SetBackgroundColor(catSurface)
 	table.SetDoneFunc(func(key tcell.Key) { showDashboard(app, pages, "Statistics closed.") })
 	pages.AddAndSwitchToPage("stats", withPet(table), true)
 }
@@ -602,8 +710,10 @@ func showGeminiKey(app *tview.Application, pages *tview.Pages) {
 }
 
 func showForm(pages *tview.Pages, title, hint string, form *tview.Form) {
-	form.SetBorder(true).SetTitle(title).SetBorderColor(tcell.ColorMediumPurple)
-	hintView := tview.NewTextView().SetDynamicColors(true).SetText("[gray]" + hint)
+	form.SetBorder(true).SetTitle(strings.ToUpper(title)).SetBorderColor(catMauve).SetBackgroundColor(catSurface)
+	form.SetLabelColor(catSubtext).SetFieldTextColor(catText).SetFieldBackgroundColor(catMantle)
+	form.SetButtonTextColor(catBase).SetButtonBackgroundColor(catMauve)
+	hintView := tview.NewTextView().SetDynamicColors(true).SetText("[#6c7086]" + hint + "[-]")
 	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(form, 0, 1, true).AddItem(hintView, 2, 0, false)
 	pages.AddAndSwitchToPage(strings.ToLower(strings.Trim(title, " ")), withPet(root), true)
 }
@@ -617,8 +727,15 @@ func petSay(action string) {
 }
 
 func withPet(content tview.Primitive) tview.Primitive {
+	pet := newPetView()
+	return tview.NewGrid().SetRows(0, 10).SetColumns(0, 30).
+		AddItem(content, 0, 0, 2, 1, 0, 0, true).
+		AddItem(pet, 1, 1, 1, 1, 0, 0, false)
+}
+
+func newPetView() *tview.TextView {
 	pet := tview.NewTextView().SetDynamicColors(true).SetText(petText(tuiPetSpeech))
-	pet.SetBorder(true).SetTitle(" Companion ").SetBorderColor(tcell.ColorMediumPurple)
+	pet.SetBackgroundColor(catMantle)
 	pet.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
 		if action == tview.MouseLeftClick {
 			tuiPetSpeech = petReactions[rand.Intn(len(petReactions))]
@@ -626,13 +743,11 @@ func withPet(content tview.Primitive) tview.Primitive {
 		}
 		return action, event
 	})
-	return tview.NewGrid().SetRows(0, 10).SetColumns(0, 30).
-		AddItem(content, 0, 0, 2, 1, 0, 0, true).
-		AddItem(pet, 1, 1, 1, 1, 0, 0, false)
+	return pet
 }
 
 func petText(speech string) string {
-	return "[mediumorchid::b]  /\\_/\\\n ( o.o )\n  > ^ <[-]\n\n[lightsteelblue]\"" + speech + "\""
+	return "[#cba6f7::b]  /\\_/\\\n ( o.o )\n  > ^ <[-]\n\n[#89b4fa]\"" + speech + "\"[-]\n\n[#6c7086]click me[-]"
 }
 
 func colorizeChangePreviewForTUI(preview string) string {
@@ -641,13 +756,13 @@ func colorizeChangePreviewForTUI(preview string) string {
 		color := ""
 		switch {
 		case strings.HasPrefix(line, "+") || strings.HasPrefix(line, "??"):
-			color = "green"
+			color = "#a6e3a1"
 		case strings.HasPrefix(line, "-") || strings.HasPrefix(line, " D") || strings.HasPrefix(line, "D "):
-			color = "indianred"
+			color = "#f38ba8"
 		case strings.HasPrefix(line, " M") || strings.HasPrefix(line, "M "):
-			color = "yellow"
+			color = "#f9e2af"
 		case strings.HasPrefix(line, "Files:") || strings.HasPrefix(line, "Changes:") || strings.HasPrefix(line, "File:") || strings.HasPrefix(line, "@@"):
-			color = "darkcyan"
+			color = "#94e2d5"
 		}
 		line = strings.ReplaceAll(line, "[", "[[]")
 		if color != "" {

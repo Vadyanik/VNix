@@ -11,8 +11,16 @@ import (
 )
 
 func TestRebuildDefaults(t *testing.T) {
-	if !enabled(nil) {
-		t.Fatal("missing git toggles should default to enabled")
+	if enabled(nil) {
+		t.Fatal("missing git toggles should default to disabled")
+	}
+}
+
+func TestRunRejectsInvalidCommands(t *testing.T) {
+	for _, args := range [][]string{{"unknown"}, {"install"}, {"key"}} {
+		if err := run(args); err == nil {
+			t.Fatalf("run(%q) should fail", args)
+		}
 	}
 }
 
@@ -25,9 +33,9 @@ func TestResolveGitStepsCascades(t *testing.T) {
 		t.Fatalf("git_add=false should disable all git steps: %+v", steps)
 	}
 
-	steps = resolveGitSteps(Config{GitCommit: &no, GitPush: &yes})
+	steps = resolveGitSteps(Config{GitAdd: &yes, GitCommit: &no, GitPush: &yes})
 	if !steps.Add || steps.Commit || steps.Push {
-		t.Fatalf("git_commit=false should disable push only: %+v", steps)
+		t.Fatalf("git_commit=false should disable push: %+v", steps)
 	}
 }
 
@@ -119,11 +127,23 @@ func TestRebuildFlowScenarios(t *testing.T) {
 		}
 	})
 
+	t.Run("runs configured rebuild command", func(t *testing.T) {
+		setupRebuildTest(t, true)
+		if err := runRebuildCommand(Config{RebuildCommand: "printf configured > rebuild-command-ran"}); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile("rebuild-command-ran")
+		if err != nil || string(data) != "configured" {
+			t.Fatalf("configured rebuild command did not run: %q, %v", data, err)
+		}
+	})
+
 	t.Run("commits and pushes with fallback message", func(t *testing.T) {
 		bin := setupRebuildTest(t, true)
 		writeScript(t, bin, "nixos-rebuild", "exit 0\n")
 
-		if err := runRebuildCommand(Config{}); err != nil {
+		yes := true
+		if err := runRebuildCommand(Config{GitAdd: &yes, GitCommit: &yes, GitPush: &yes}); err != nil {
 			t.Fatal(err)
 		}
 		if got := gitOutput(t, "log", "-1", "--format=%s"); !strings.HasPrefix(got, "rebuild: ") {
@@ -134,6 +154,9 @@ func TestRebuildFlowScenarios(t *testing.T) {
 		if local != remote {
 			t.Fatalf("push did not update origin: local=%s remote=%s", local, remote)
 		}
+		if status := gitOutput(t, "status", "--short"); !strings.Contains(status, "M configuration.nix") {
+			t.Fatalf("unmanaged file should not be staged or committed: %q", status)
+		}
 	})
 
 	t.Run("uses fallback message when AI is unavailable", func(t *testing.T) {
@@ -141,7 +164,8 @@ func TestRebuildFlowScenarios(t *testing.T) {
 		writeScript(t, bin, "nixos-rebuild", "exit 0\n")
 		noPush := false
 
-		if err := runRebuildCommand(Config{GitPush: &noPush, CommitMessagePrefix: "fallback"}); err != nil {
+		yes := true
+		if err := runRebuildCommand(Config{GitAdd: &yes, GitCommit: &yes, GitPush: &noPush, CommitMessagePrefix: "fallback"}); err != nil {
 			t.Fatal(err)
 		}
 		matched, err := regexp.MatchString(`^fallback: [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$`, gitOutput(t, "log", "-1", "--format=%s"))
@@ -156,10 +180,12 @@ func TestRebuildFlowScenarios(t *testing.T) {
 	t.Run("honors disabled commit push and hooks", func(t *testing.T) {
 		bin := setupRebuildTest(t, true)
 		writeScript(t, bin, "nixos-rebuild", "exit 0\n")
+		yesAdd := true
 		noCommit := false
 		noPush := false
 
 		config := Config{
+			GitAdd:    &yesAdd,
 			GitCommit: &noCommit,
 			GitPush:   &noPush,
 			Hooks: Hooks{
@@ -255,6 +281,12 @@ func setupRebuildTest(t *testing.T, dirty bool) string {
 	if err := os.WriteFile("configuration.nix", []byte("initial\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll("modules", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managedPackagesPath, []byte("initial\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(".gitignore", []byte(".vnix/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -274,6 +306,9 @@ func setupRebuildTest(t *testing.T, dirty bool) string {
 	}
 	if dirty {
 		if err := os.WriteFile("configuration.nix", []byte("changed\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(managedPackagesPath, []byte("changed\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
