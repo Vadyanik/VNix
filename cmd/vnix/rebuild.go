@@ -18,15 +18,31 @@ import (
 )
 
 type Config struct {
-	ManagedPackagesFile string `json:"managed_packages_file"`
-	RebuildCommand      string `json:"rebuild_command"`
-	NixpkgsBranch       string `json:"nixpkgs_branch"`
-	GitAdd              *bool  `json:"git_add"`
-	GitCommit           *bool  `json:"git_commit"`
-	GitPush             *bool  `json:"git_push"`
-	CommitMessagePrefix string `json:"commit_message_prefix"`
-	SecurityScanCommand string `json:"security_scan_command"`
-	Hooks               Hooks  `json:"hooks"`
+	ManagedPackagesFile  string `json:"managed_packages_file"`
+	RebuildCommand       string `json:"rebuild_command"`
+	NixpkgsBranch        string `json:"nixpkgs_branch"`
+	GitAdd               *bool  `json:"git_add"`
+	GitCommit            *bool  `json:"git_commit"`
+	GitPush              *bool  `json:"git_push"`
+	GitAddAll            bool   `json:"git_add_all"`
+	GitAddBeforeRebuild  *bool  `json:"git_add_before_rebuild"`
+	GitPushRemote        string `json:"git_push_remote"`
+	GitPushBranch        string `json:"git_push_branch"`
+	GitPushForce         bool   `json:"git_push_force"`
+	GitSSHCommand        string `json:"git_ssh_command"`
+	GitUserName          string `json:"git_user_name"`
+	GitUserEmail         string `json:"git_user_email"`
+	SkipUnchanged        *bool  `json:"skip_unchanged"`
+	RebuildBackup        *bool  `json:"rebuild_backup"`
+	RecordStats          *bool  `json:"record_stats"`
+	AIDiagnosis          *bool  `json:"ai_diagnosis"`
+	AICommitMessage      *bool  `json:"ai_commit_message"`
+	CommitMessageCommand string `json:"commit_message_command"`
+	HooksEnabled         *bool  `json:"hooks_enabled"`
+	HooksContinueOnError bool   `json:"hooks_continue_on_error"`
+	CommitMessagePrefix  string `json:"commit_message_prefix"`
+	SecurityScanCommand  string `json:"security_scan_command"`
+	Hooks                Hooks  `json:"hooks"`
 }
 
 type Hooks struct {
@@ -88,7 +104,7 @@ func runRebuildCommand(config Config) error {
 	if err != nil {
 		return err
 	}
-	if !hasChanges {
+	if !hasChanges && defaultEnabled(config.SkipUnchanged) {
 		fmt.Println("No changes found, rebuild skipped.")
 		return nil
 	}
@@ -98,10 +114,12 @@ func runRebuildCommand(config Config) error {
 	}
 	fmt.Println("Changes to be applied:")
 	fmt.Print(colorizeChangePreview(preview))
-	if backup, err := createBackup(); err != nil {
-		return fmt.Errorf("create rebuild backup: %w", err)
-	} else {
-		fmt.Println("Backup created:", backup.Name)
+	if defaultEnabled(config.RebuildBackup) {
+		if backup, err := createBackup(); err != nil {
+			return fmt.Errorf("create rebuild backup: %w", err)
+		} else {
+			fmt.Println("Backup created:", backup.Name)
+		}
 	}
 
 	command := strings.TrimSpace(config.RebuildCommand)
@@ -117,12 +135,18 @@ func runRebuildCommand(config Config) error {
 	gitSteps := resolveGitSteps(config)
 
 	var rebuildOutput string
-	err = runHooks("before_rebuild", config.Hooks.BeforeRebuild)
+	err = configureGitIdentity(config)
+	if err == nil && gitSteps.Add && defaultEnabled(config.GitAddBeforeRebuild) {
+		err = stageRebuildFiles(config)
+	}
+	if err == nil {
+		err = runConfiguredHooks(config, "before_rebuild", config.Hooks.BeforeRebuild)
+	}
 	if err == nil {
 		rebuildOutput, err = runRebuildSystem(command)
 	}
 	if err == nil {
-		err = runHooks("after_rebuild", config.Hooks.AfterRebuild)
+		err = runConfiguredHooks(config, "after_rebuild", config.Hooks.AfterRebuild)
 	}
 	if err == nil && strings.TrimSpace(config.SecurityScanCommand) != "" {
 		result, scanErr := runSecurityScan(config.SecurityScanCommand)
@@ -130,29 +154,30 @@ func runRebuildCommand(config Config) error {
 		err = scanErr
 	}
 	if err == nil && gitSteps.Add {
-		managedFile, pathErr := managedPackagesFile()
-		if pathErr != nil {
-			err = pathErr
-		} else {
-			err = runCommand("git", "add", "--", managedFile)
+		err = stageRebuildFiles(config)
+	}
+	if err == nil && gitSteps.Commit {
+		err = runConfiguredHooks(config, "before_commit", config.Hooks.BeforeCommit)
+	}
+	if err == nil && gitSteps.Commit {
+		var staged bool
+		staged, err = gitHasStagedChanges()
+		if err == nil && staged {
+			message := configuredCommitMessage(config)
+			printCommitMessage(message)
+			err = runCommand("git", "commit", "-m", message)
+			if err == nil {
+				err = runConfiguredHooks(config, "after_commit", config.Hooks.AfterCommit)
+			}
+		} else if err == nil {
+			fmt.Println("No staged changes; commit skipped.")
 		}
 	}
-	if err == nil && gitSteps.Commit {
-		err = runHooks("before_commit", config.Hooks.BeforeCommit)
-	}
-	if err == nil && gitSteps.Commit {
-		message := aiCommitMessage(config.CommitMessagePrefix)
-		printCommitMessage(message)
-		err = runCommand("git", "commit", "-m", message)
-	}
-	if err == nil && gitSteps.Commit {
-		err = runHooks("after_commit", config.Hooks.AfterCommit)
+	if err == nil && gitSteps.Push {
+		err = pushRebuildChanges(config)
 	}
 	if err == nil && gitSteps.Push {
-		err = runCommand("git", "push")
-	}
-	if err == nil && gitSteps.Push {
-		err = runHooks("after_push", config.Hooks.AfterPush)
+		err = runConfiguredHooks(config, "after_push", config.Hooks.AfterPush)
 	}
 
 	finishedAt := time.Now()
@@ -180,10 +205,15 @@ func runRebuildCommand(config Config) error {
 	} else {
 		fmt.Println("Rebuild completed successfully.")
 	}
-	if statsErr := updateStats(entry); statsErr != nil {
-		return statsErr
+	if defaultEnabled(config.RecordStats) {
+		if statsErr := updateStats(entry); statsErr != nil {
+			if err != nil {
+				return fmt.Errorf("%w; save rebuild statistics: %v", err, statsErr)
+			}
+			return statsErr
+		}
 	}
-	if err != nil {
+	if err != nil && defaultEnabled(config.AIDiagnosis) {
 		lastRebuildDiagnosis = diagnoseRebuildFailure(err, rebuildOutput)
 		if lastRebuildDiagnosis != "" {
 			fmt.Println("\nOpenCode diagnosis:\n" + lastRebuildDiagnosis)
@@ -194,6 +224,10 @@ func runRebuildCommand(config Config) error {
 
 func enabled(value *bool) bool {
 	return value != nil && *value
+}
+
+func defaultEnabled(value *bool) bool {
+	return value == nil || *value
 }
 
 func resolveGitSteps(config Config) GitSteps {
@@ -232,7 +266,7 @@ func gitChangePreview() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("git status failed: %w", err)
 	}
-	diff, err := exec.Command("git", "diff", "--no-ext-diff", "--ignore-submodules=dirty", "HEAD", "--").Output()
+	diff, err := pendingGitDiff()
 	if err != nil {
 		return "", fmt.Errorf("git diff failed: %w", err)
 	}
@@ -314,6 +348,7 @@ func runHooks(name string, hooks []string) error {
 func runCommand(name string, args ...string) error {
 	fmt.Println("$", name, strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
+	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -322,6 +357,7 @@ func runCommand(name string, args ...string) error {
 func runRebuildSystem(command string) (string, error) {
 	var output bytes.Buffer
 	cmd := exec.Command("bash", "-c", command)
+	cmd.Stdin = os.Stdin
 	cmd.Stdout = io.MultiWriter(os.Stdout, &output)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &output)
 	err := cmd.Run()
@@ -528,8 +564,7 @@ func updateStats(entry RebuildEntry) error {
 }
 
 func gitDiffNumstat() (map[string][2]int, error) {
-	cmd := exec.Command("git", "diff", "--numstat", "--no-ext-diff", "--ignore-submodules=dirty", "HEAD", "--")
-	output, err := cmd.Output()
+	output, err := pendingGitDiff("--numstat")
 	if err != nil {
 		return nil, err
 	}
